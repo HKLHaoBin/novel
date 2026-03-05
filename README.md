@@ -101,4 +101,4 @@ src/
 
 ## License
 
-MIT
+LGPL-2.1
