@@ -2,13 +2,15 @@
 
 核心能力：
 1. 根据大纲撰写章节正文
-2. 集成上下文构建器
-3. 引导使用工具查询避免错误
+2. 使用工具主动查询上下文（通过 function calling）
+3. 集成上下文构建器
 """
 
 from .base import AgentContext, AgentResult, BaseAgent
-from .context_builder import build_full_context, build_uncertainty_guidance
+from .context_builder import build_full_context
 from .prompt_loader import prompt_library
+from .tools import get_all_tools
+from src.llm.provider import ToolCallLoop
 
 
 class Writer(BaseAgent):
@@ -21,6 +23,7 @@ class Writer(BaseAgent):
         """初始化作家"""
         super().__init__(llm=llm)
         self._load_prompts()
+        self._tools = get_all_tools()
     
     def _load_prompts(self):
         """加载提示词模板"""
@@ -49,20 +52,19 @@ class Writer(BaseAgent):
         word_count = context.extra.get("word_count", 3000)
         
         try:
-            # 构建上下文
+            # 构建基础上下文
             ctx_text = build_full_context(context)
-            uncertainty_guide = build_uncertainty_guidance()
             
             # 判断是第一章还是后续章节
             is_first_chapter = chapter_num == 1
             
             if is_first_chapter:
                 content = await self._write_first_chapter(
-                    context, ctx_text, uncertainty_guide, blueprint, word_count
+                    context, ctx_text, blueprint, word_count
                 )
             else:
                 content = await self._write_chapter(
-                    context, ctx_text, uncertainty_guide, blueprint, chapter_num, word_count
+                    context, ctx_text, blueprint, chapter_num, word_count
                 )
             
             # 提取章节标题
@@ -76,25 +78,48 @@ class Writer(BaseAgent):
             )
             
         except Exception as e:
+            import traceback
             return AgentResult(
                 success=False,
-                error=f"写作过程出错: {str(e)}",
+                error=f"写作过程出错: {str(e)}\n{traceback.format_exc()}",
             )
     
     async def _write_first_chapter(
         self,
         context: AgentContext,
         ctx_text: str,
-        uncertainty_guide: str,
         blueprint: str,
         word_count: int,
     ) -> str:
         """撰写第一章"""
         
-        prompt = f"""请撰写小说的第一章。
+        system_prompt = f"""你是专业小说作家。
+
+【当前任务】撰写小说第一章
 
 【世界观与设定】
 {ctx_text}
+
+【工具使用指南】
+你可以使用以下工具：
+- query_character(角色名): 查询角色详细信息
+- query_location(地点名): 查询地点信息
+- query_timeline(): 查询时间轴
+- suggest_next(): 获取下一步建议
+- complete(content): 提交最终内容（必须调用！）
+
+【重要】完成写作后，必须调用 complete(content) 提交你的内容！
+
+【第一章特殊要求】
+1. 开篇黄金500字：建立场景氛围 → 引入主角 → 出现冲突/悬念
+2. 埋下贯穿全文的伏笔（至少1个）
+3. 章末悬念钩子，吸引继续阅读
+
+【输出要求】
+- 使用标准的小说格式（对话用「」）
+- 字数控制在{word_count}字左右"""
+
+        user_prompt = f"""请撰写第一章。
 
 【章节大纲】
 {blueprint if blueprint else '根据设定自由发挥，开篇要吸引人'}
@@ -102,27 +127,23 @@ class Writer(BaseAgent):
 【目标字数】
 {word_count}字左右
 
-【第一章特殊要求】
-1. 开篇黄金500字：
-   - 前100字：建立场景氛围
-   - 100-300字：引入主角特征（通过行动而非介绍）
-   - 300-500字：出现第一个冲突/悬念点
-   - 500字后：进入正题
-2. 埋下贯穿全文的伏笔（至少1个）
-3. 章末悬念钩子，吸引继续阅读
+【工作流程】
+1. 使用工具查询必要的角色和设定信息
+2. 撰写章节内容
+3. 调用 complete(content) 提交最终内容"""
 
-{uncertainty_guide}
-
-【输出要求】
-- 直接输出章节正文，不要标题
-- 使用标准的小说格式（对话用「」）
-- 场景描写生动，对话自然流畅
-- 注意节奏控制，张弛有度
-- 字数控制在{word_count}字左右"""
+        # 使用工具调用循环
+        tool_loop = ToolCallLoop(
+            tools=self._tools,
+            context=context,
+            max_iterations=5,
+            on_tool_call=lambda n, a: print(f"  [工具调用] {n}({a})")
+        )
         
-        content = await self._call_llm(
-            prompt, 
-            system=self._system_prompt,
+        content = await tool_loop.run(
+            provider=self.llm,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             max_tokens=word_count + 500,
         )
         
@@ -132,56 +153,73 @@ class Writer(BaseAgent):
         self,
         context: AgentContext,
         ctx_text: str,
-        uncertainty_guide: str,
         blueprint: str,
         chapter_num: int,
         word_count: int,
     ) -> str:
-        """撰写后续章节"""
+        """撰写后续章节（带工具调用）"""
         
-        # 获取上一章摘要
-        prev_summary = ""
-        if context.knowledge:
-            try:
-                memories = await context.knowledge.retrieve(f"第{chapter_num-1}章摘要", top_k=2)
-                if memories:
-                    prev_summary = "\n".join(m.get("summary", m.get("content", "")) for m in memories)
-            except Exception:
-                pass
-        
-        prompt = f"""请撰写小说的第{chapter_num}章。
+        system_prompt = f"""你是专业小说作家。
+
+【当前任务】撰写小说第{chapter_num}章
 
 【世界观与设定】
 {ctx_text}
 
-【上一章摘要】
-{prev_summary if prev_summary else "无历史记录"}
+【工具使用指南】
+- query_previous_chapter(章节号): 查询前文内容
+- query_all_chapters(): 查询所有已完成章节摘要
+- query_chapter_outline(章节号): 查询章节大纲
+- query_character(角色名): 查询角色当前状态
+- query_events(): 查询已发生事件
+- query_timeline(): 查询时间轴
+- suggest_next(): 获取下一步发展建议
+- complete(content): 提交最终内容
+
+【强制要求 - 必须按顺序执行】
+1. 首先调用 query_previous_chapter({chapter_num - 1}) 获取上一章完整内容
+2. 根据前文内容确保风格、角色、情节连贯
+3. 章节标题必须与前文不同，不能重复
+4. 最后调用 complete(content) 提交内容
+
+【写作要求】
+1. 承接上文：风格统一、自然过渡
+2. 推进情节：有实质进展
+3. 角色一致：人名、性格、行为统一
+4. 场景合理：地点转换有交代
+5. 标题创新：每章标题必须独特，不能与前面章节重复
+
+【输出格式】
+第一行：第{chapter_num}章：[独特的章节标题]
+然后是小说正文内容。
+字数控制在{word_count}字左右。"""
+
+        user_prompt = f"""请撰写第{chapter_num}章。
 
 【本章大纲】
-{blueprint if blueprint else "根据上下文继续推进情节，确保故事连贯"}
+{blueprint if blueprint else "根据上下文继续推进情节"}
 
 【目标字数】
 {word_count}字左右
 
-【写作要求】
-1. 承接上文：自然过渡，不生硬
-2. 推进情节：每章都要有实质进展
-3. 角色一致：行为符合已建立的人设
-4. 场景合理：地点转换要有交代
-5. 时间清晰：让读者知道是什么时间
-6. 情感节奏：根据大纲调整张弛
-
-{uncertainty_guide}
-
-【输出要求】
-- 直接输出章节正文，不要标题
-- 使用标准的小说格式
-- 确保内容连贯，不与前文矛盾
-- 字数控制在{word_count}字左右"""
+【执行步骤 - 严格按顺序】
+步骤1: 调用 query_previous_chapter({chapter_num - 1}) 查看上一章内容
+步骤2: 确认上一章的风格、角色名字、情节发展
+步骤3: 撰写本章内容，确保与前文连贯，标题不重复
+步骤4: 调用 complete(content) 提交"""
         
-        content = await self._call_llm(
-            prompt,
-            system=self._system_prompt,
+        # 使用工具调用循环
+        tool_loop = ToolCallLoop(
+            tools=self._tools,
+            context=context,
+            max_iterations=6,
+            on_tool_call=lambda n, a: print(f"  [工具调用] {n}")
+        )
+        
+        content = await tool_loop.run(
+            provider=self.llm,
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
             max_tokens=word_count + 500,
         )
         
@@ -189,51 +227,23 @@ class Writer(BaseAgent):
     
     def _extract_title(self, content: str, chapter_num: int) -> str:
         """从内容中提取标题"""
+        import re
         lines = content.strip().split('\n')
         if lines:
             first_line = lines[0].strip()
-            # 如果第一行包含章节信息
-            if '第' in first_line and '章' in first_line:
-                # 尝试提取标题
-                parts = first_line.split('章', 1)
-                if len(parts) > 1:
-                    return parts[1].strip().replace('《', '').replace('》', '')
+            # 匹配 "第X章 标题" 或 "第X章：标题" 等格式
+            match = re.match(r'第\d+章[：:\s]*(.+?)(?:\n|$)', first_line)
+            if match:
+                title = match.group(1).strip()
+                # 清理标题中的非法字符
+                title = re.sub(r'[。：:，,！!？?；;　\s]+', '', title)
+                # 限制长度
+                if len(title) > 20:
+                    title = title[:20]
+                return title
         
         return ""
     
     def get_system_prompt(self) -> str:
         """获取系统提示词"""
         return self._system_prompt
-
-
-# 场景模板
-SCENE_TEMPLATES = {
-    "action": """
-【动作场景技巧】
-- 用短句加快节奏
-- 多用动词少用形容词
-- 删减过渡语
-- 增强感官冲击
-""",
-    "dialogue": """
-【对话场景技巧】
-- 对话要自然口语化
-- 增加动作描写增强画面
-- 体现角色性格差异
-- 每句对话都要有存在意义
-""",
-    "description": """
-【描写场景技巧】
-- 远景→中景→近景→动态
-- 五感并用
-- 避免信息倾倒
-- 选取典型细节
-""",
-    "emotion": """
-【情感场景技巧】
-- 用行动展示情感
-- 控制情感强度节奏
-- 适当留白引发共鸣
-- 避免过度煽情
-""",
-}

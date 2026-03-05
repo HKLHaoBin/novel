@@ -50,6 +50,218 @@ class Tool:
     execute: Callable
 
 
+# =============== 章节查询工具 ===============
+
+def complete(context: Any, content: str = "") -> ToolResult:
+    """
+    完成任务并提交最终内容
+    
+    Args:
+        context: AgentContext
+        content: 最终完成的章节内容
+        
+    Returns:
+        完成确认
+    """
+    return ToolResult(
+        success=True,
+        content="任务已完成",
+        data={"final_content": content, "completed": True}
+    )
+
+
+async def query_previous_chapter(context: Any, chapter_num: int | str | None = None) -> ToolResult:
+    """
+    查询已完成章节的内容
+    
+    Args:
+        context: AgentContext
+        chapter_num: 章节号（可选，默认查询上一章）
+        
+    Returns:
+        章节内容
+    """
+    # 从 context.extra 获取状态管理器和小说标题
+    state_manager = context.extra.get("state_manager")
+    novel_title = context.extra.get("novel_title")
+    current_chapter = context.extra.get("chapter_num", 1)
+    
+    # 确保类型正确
+    if isinstance(chapter_num, str):
+        chapter_num = int(chapter_num) if chapter_num.isdigit() else None
+    if isinstance(current_chapter, str):
+        current_chapter = int(current_chapter) if current_chapter.isdigit() else 1
+    
+    # 确定要查询的章节
+    target_chapter = chapter_num if chapter_num is not None else current_chapter - 1
+    
+    if target_chapter < 1:
+        return ToolResult(
+            success=False,
+            content="没有更早的章节",
+            suggestions=["这是第一章，没有前文内容"]
+        )
+    
+    # 尝试从知识库获取
+    if context.knowledge:
+        try:
+            memories = await context.knowledge.retrieve(f"第{target_chapter}章", top_k=3)
+            if memories:
+                content = "\n\n".join(m.get("content", "") for m in memories)
+                return ToolResult(
+                    success=True,
+                    content=f"第{target_chapter}章内容（从知识库）:\n{content[:2000]}..." if len(content) > 2000 else f"第{target_chapter}章内容:\n{content}"
+                )
+        except Exception:
+            pass
+    
+    # 从文件系统获取
+    if state_manager and novel_title:
+        try:
+            content = state_manager.load_chapter(novel_title, target_chapter)
+            if content:
+                return ToolResult(
+                    success=True,
+                    content=f"第{target_chapter}章内容:\n{content[:2000]}..." if len(content) > 2000 else f"第{target_chapter}章内容:\n{content}"
+                )
+        except Exception:
+            pass
+    
+    # 从 context.extra 获取已完成的章节
+    completed_chapters = context.extra.get("completed_chapters", {})
+    if str(target_chapter) in completed_chapters:
+        ch_content = completed_chapters[str(target_chapter)]
+        return ToolResult(
+            success=True,
+            content=f"第{target_chapter}章内容:\n{ch_content[:2000]}..." if len(ch_content) > 2000 else f"第{target_chapter}章内容:\n{ch_content}"
+        )
+    
+    return ToolResult(
+        success=False,
+        content=f"未找到第{target_chapter}章内容",
+        suggestions=["该章节可能尚未完成", "检查章节号是否正确"]
+    )
+
+
+async def query_chapter_outline(context: Any, chapter_num: int | str | None = None) -> ToolResult:
+    """
+    查询章节大纲
+    
+    Args:
+        context: AgentContext
+        chapter_num: 章节号（可选，默认查询当前章节）
+        
+    Returns:
+        章节大纲
+    """
+    # 从 context.extra 获取信息
+    current_chapter = context.extra.get("chapter_num", 1)
+    
+    # 确保类型正确
+    if isinstance(chapter_num, str):
+        chapter_num = int(chapter_num) if chapter_num.isdigit() else None
+    if isinstance(current_chapter, str):
+        current_chapter = int(current_chapter) if current_chapter.isdigit() else 1
+    
+    target_chapter = chapter_num if chapter_num is not None else current_chapter
+    global_summary = context.extra.get("global_summary", "")
+    total_chapters = context.extra.get("total_chapters", 0)
+    
+    # 尝试从知识库获取大纲
+    if context.knowledge:
+        try:
+            memories = await context.knowledge.retrieve(f"章节大纲 第{target_chapter}章", top_k=2)
+            if memories:
+                outline = "\n".join(m.get("content", "") for m in memories)
+                return ToolResult(
+                    success=True,
+                    content=f"第{target_chapter}章大纲:\n{outline}"
+                )
+        except Exception:
+            pass
+    
+    # 从全局设计中提取
+    if global_summary:
+        lines = global_summary.split('\n')
+        outline_lines = []
+        in_chapter = False
+        chapter_marker = f"第{target_chapter}章"
+        
+        for line in lines:
+            if chapter_marker in line or f"章节{target_chapter}" in line:
+                in_chapter = True
+            elif in_chapter and ("第" in line and "章" in line and chapter_marker not in line):
+                break
+            elif in_chapter:
+                outline_lines.append(line)
+        
+        if outline_lines:
+            return ToolResult(
+                success=True,
+                content=f"第{target_chapter}章大纲:\n" + "\n".join(outline_lines[:20])
+            )
+    
+    # 返回通用指导
+    return ToolResult(
+        success=True,
+        content=f"第{target_chapter}章大纲:\n（未找到具体大纲，请参考全局设定自由发挥）\n\n全局设定摘要:\n{global_summary[:1000]}..." if global_summary else f"第{target_chapter}章大纲:\n未找到大纲，请根据上下文自由创作",
+        suggestions=[
+            f"当前进度: 第{current_chapter}/{total_chapters}章",
+            "可以先用 query_previous_chapter 查看前文",
+            "可以用 query_timeline 了解时间线"
+        ]
+    )
+
+
+async def query_all_chapters(context: Any) -> ToolResult:
+    """
+    查询所有已完成章节的摘要
+    
+    Args:
+        context: AgentContext
+        
+    Returns:
+        所有章节摘要
+    """
+    completed_chapters = context.extra.get("completed_chapters", {})
+    state_manager = context.extra.get("state_manager")
+    novel_title = context.extra.get("novel_title")
+    
+    summaries = []
+    
+    # 从知识库获取各章摘要
+    if context.knowledge:
+        try:
+            # 获取章节列表
+            current = context.extra.get("chapter_num", 1)
+            for ch in range(1, current):
+                memories = await context.knowledge.retrieve(f"第{ch}章摘要", top_k=1)
+                if memories:
+                    summary = memories[0].get("summary", memories[0].get("content", ""))[:300]
+                    summaries.append(f"第{ch}章: {summary}")
+        except Exception:
+            pass
+    
+    if not summaries:
+        # 尝试从文件系统
+        if state_manager and novel_title:
+            chapters = state_manager.list_chapters(novel_title)
+            for ch in chapters:
+                summaries.append(f"第{ch['chapter_num']}章: {ch.get('title', '')}")
+    
+    if not summaries:
+        return ToolResult(
+            success=False,
+            content="暂无已完成章节",
+            suggestions=["开始创作第一章"]
+        )
+    
+    return ToolResult(
+        success=True,
+        content="已完成章节摘要:\n" + "\n".join(f"├──{s}" for s in summaries)
+    )
+
+
 # =============== 查询类工具 ===============
 
 def query_character(context: Any, character_id: str) -> ToolResult:
@@ -63,51 +275,69 @@ def query_character(context: Any, character_id: str) -> ToolResult:
     Returns:
         角色完整信息
     """
+    # 安全检查
+    if not context.characters:
+        return ToolResult(
+            success=False,
+            content="暂无角色信息",
+            suggestions=["小说尚未创建角色，请先完成设计阶段"]
+        )
+    
     char = context.characters.get(character_id)
     
     # 支持按名称查询
     if not char:
         for cid, c in context.characters.items():
-            if c.name == character_id:
+            if hasattr(c, 'name') and c.name == character_id:
                 char = c
                 character_id = cid
                 break
     
     if not char:
+        available_names = []
+        for c in context.characters.values():
+            if hasattr(c, 'name'):
+                available_names.append(c.name)
         return ToolResult(
             success=False,
             content=f"未找到角色: {character_id}",
-            suggestions=[f"可用角色: {', '.join(c.name for c in context.characters.values())}"]
+            suggestions=[f"可用角色: {', '.join(available_names)}"] if available_names else ["暂无角色"]
         )
     
     # 构建结构化输出
     lines = [
         f"角色：{char.name}",
         "├──基础信息",
-        f"│  ├──性别: {char.gender}",
-        f"│  ├──年龄: {char.age}",
-        f"│  └──性格: {char.personality}",
+        f"│  ├──性别: {char.gender if hasattr(char, 'gender') else '未知'}",
+        f"│  ├──年龄: {char.age if hasattr(char, 'age') else '未知'}",
+        f"│  └──性格: {char.personality if hasattr(char, 'personality') else '未知'}",
         "├──能力",
     ]
     
-    for ability in char.abilities.values():
+    abilities = char.abilities if hasattr(char, 'abilities') else {}
+    for ability in abilities.values() if abilities else []:
         status = []
-        if ability.is_future:
+        if hasattr(ability, 'is_future') and ability.is_future:
             status.append("未来获得")
-        elif not ability.is_public:
+        elif hasattr(ability, 'is_public') and not ability.is_public:
             status.append("未公开")
         else:
             status.append("已公开")
         
         status_str = f"（{', '.join(status)}）" if status else ""
-        lines.append(f"│  ├──{ability.name}{status_str}: {ability.description}")
+        desc = ability.description if hasattr(ability, 'description') else ""
+        name = ability.name if hasattr(ability, 'name') else str(ability)
+        lines.append(f"│  ├──{name}{status_str}: {desc}")
     
+    notes = char.notes if hasattr(char, 'notes') else []
     lines.append("├──备注")
-    for note in char.notes[-5:]:  # 最近5条备注
+    for note in notes[-5:]:  # 最近5条备注
         lines.append(f"│  └──{note}")
     
-    lines.append(f"├──最近行为: {char.last_action}")
-    lines.append(f"└──行为结果: {char.last_result}")
+    last_action = char.last_action if hasattr(char, 'last_action') else ""
+    last_result = char.last_result if hasattr(char, 'last_result') else ""
+    lines.append(f"├──最近行为: {last_action}")
+    lines.append(f"└──行为结果: {last_result}")
     
     return ToolResult(
         success=True,
@@ -128,7 +358,7 @@ def query_location(context: Any, location_id: str) -> ToolResult:
         地点完整信息及当前在场角色
     """
     if not context.world_map:
-        return ToolResult(success=False, content="无地图信息")
+        return ToolResult(success=False, content="暂无地图信息")
     
     loc = context.world_map.get_location(location_id)
     
@@ -137,49 +367,63 @@ def query_location(context: Any, location_id: str) -> ToolResult:
         loc = context.world_map.find_location_by_name(location_id)
     
     if not loc:
+        available_names = []
+        if hasattr(context.world_map, 'locations'):
+            for l in context.world_map.locations.values():
+                if hasattr(l, 'name'):
+                    available_names.append(l.name)
         return ToolResult(
             success=False,
             content=f"未找到地点: {location_id}",
-            suggestions=[f"可用地点: {', '.join(loc.name for loc in context.world_map.locations.values())}"]
+            suggestions=[f"可用地点: {', '.join(available_names)}"] if available_names else ["暂无地点"]
         )
     
     # 构建结构化输出
+    loc_type = loc.type if hasattr(loc, 'type') else None
+    loc_type_value = loc_type.value if loc_type and hasattr(loc_type, 'value') else "未知"
+    
     lines = [
-        f"地点：{loc.name}",
-        f"├──类型: {loc.type.value}",
-        f"├──描述: {loc.description}",
+        f"地点：{loc.name if hasattr(loc, 'name') else location_id}",
+        f"├──类型: {loc_type_value}",
+        f"├──描述: {loc.description if hasattr(loc, 'description') else '无'}",
     ]
     
     # 父级地点
-    if loc.parent_id:
-        parent = context.world_map.get_location(loc.parent_id)
-        if parent:
+    parent_id = loc.parent_id if hasattr(loc, 'parent_id') else None
+    if parent_id and hasattr(context.world_map, 'get_location'):
+        parent = context.world_map.get_location(parent_id)
+        if parent and hasattr(parent, 'name'):
             lines.append(f"├──上级地点: {parent.name}")
     
     # 子级地点
-    children = context.world_map.get_children(loc.id)
-    if children:
-        lines.append("├──下级地点")
-        for i, child in enumerate(children):
-            marker = "└──" if i == len(children) - 1 else "│  ├──"
-            lines.append(f"{marker}{child.name}")
+    if hasattr(context.world_map, 'get_children'):
+        children = context.world_map.get_children(loc.id if hasattr(loc, 'id') else location_id)
+        if children:
+            lines.append("├──下级地点")
+            for i, child in enumerate(children):
+                marker = "└──" if i == len(children) - 1 else "│  ├──"
+                child_name = child.name if hasattr(child, 'name') else str(child)
+                lines.append(f"{marker}{child_name}")
     
     # 相邻地点
-    adjacent = context.world_map.get_adjacent_locations(loc.id)
-    if adjacent:
-        lines.append("├──相邻地点")
-        adj_names = [a.name for a in adjacent]
-        lines.append(f"│  └──{', '.join(adj_names)}")
+    if hasattr(context.world_map, 'get_adjacent_locations'):
+        adjacent = context.world_map.get_adjacent_locations(loc.id if hasattr(loc, 'id') else location_id)
+        if adjacent:
+            lines.append("├──相邻地点")
+            adj_names = [a.name if hasattr(a, 'name') else str(a) for a in adjacent]
+            lines.append(f"│  └──{', '.join(adj_names)}")
     
     # 当前在场角色
     characters_here = []
-    if context.timeline and context.current_point_id:
-        point = context.timeline.get_point(context.current_point_id)
-        if point:
-            for char_id, loc_id in point.character_locations.items():
-                if loc_id == loc.id:
-                    char = context.characters.get(char_id)
-                    characters_here.append(char.name if char else char_id)
+    current_point_id = context.current_point_id if hasattr(context, 'current_point_id') else None
+    if context.timeline and current_point_id and hasattr(context.timeline, 'get_point'):
+        point = context.timeline.get_point(current_point_id)
+        if point and hasattr(point, 'character_locations'):
+            loc_id = loc.id if hasattr(loc, 'id') else location_id
+            for char_id, lid in point.character_locations.items():
+                if lid == loc_id:
+                    char = context.characters.get(char_id) if context.characters else None
+                    characters_here.append(char.name if char and hasattr(char, 'name') else char_id)
     
     if characters_here:
         lines.append("└──当前在场角色")
@@ -206,53 +450,71 @@ def query_timeline(context: Any, point_id: str | None = None) -> ToolResult:
         时间轴结构化信息
     """
     if not context.timeline:
-        return ToolResult(success=False, content="无时间轴信息")
+        return ToolResult(success=False, content="暂无时间轴信息")
+    
+    current_point_id = context.current_point_id if hasattr(context, 'current_point_id') else None
     
     if point_id:
+        if not hasattr(context.timeline, 'get_point'):
+            return ToolResult(success=False, content="时间轴不支持查询")
+        
         point = context.timeline.get_point(point_id)
         if not point:
             return ToolResult(success=False, content=f"未找到时间点: {point_id}")
         
+        prev_point = context.timeline.get_prev(point_id) if hasattr(context.timeline, 'get_prev') else None
+        next_point = context.timeline.get_next(point_id) if hasattr(context.timeline, 'get_next') else None
+        
         lines = [
-            f"时间点：{point.label}",
-            f"├──前一时间点: {context.timeline.get_prev(point_id).label if context.timeline.get_prev(point_id) else '无'}",
-            f"├──后一时间点: {context.timeline.get_next(point_id).label if context.timeline.get_next(point_id) else '无'}",
+            f"时间点：{point.label if hasattr(point, 'label') else point_id}",
+            f"├──前一时间点: {prev_point.label if prev_point and hasattr(prev_point, 'label') else '无'}",
+            f"├──后一时间点: {next_point.label if next_point and hasattr(next_point, 'label') else '无'}",
             "├──涉及节点",
         ]
         
-        for i, node_id in enumerate(point.node_ids):
-            marker = "│  └──" if i == len(point.node_ids) - 1 else "│  ├──"
-            node = context.graph.get_node(node_id) if context.graph else None
-            lines.append(f"{marker}{node_id} ({node.type.value if node else '未知'})")
+        node_ids = point.node_ids if hasattr(point, 'node_ids') else []
+        for i, node_id in enumerate(node_ids):
+            marker = "│  └──" if i == len(node_ids) - 1 else "│  ├──"
+            node = context.graph.get_node(node_id) if context.graph and hasattr(context.graph, 'get_node') else None
+            node_type = node.type.value if node and hasattr(node, 'type') and hasattr(node.type, 'value') else '未知'
+            lines.append(f"{marker}{node_id} ({node_type})")
         
         lines.append("└──角色位置")
-        for char_id, loc_id in point.character_locations.items():
-            char = context.characters.get(char_id)
-            loc = context.world_map.get_location(loc_id) if context.world_map else None
-            char_name = char.name if char else char_id
-            loc_name = loc.name if loc else loc_id
+        char_locs = point.character_locations if hasattr(point, 'character_locations') else {}
+        for char_id, loc_id in char_locs.items():
+            char = context.characters.get(char_id) if context.characters else None
+            loc = context.world_map.get_location(loc_id) if context.world_map and hasattr(context.world_map, 'get_location') else None
+            char_name = char.name if char and hasattr(char, 'name') else char_id
+            loc_name = loc.name if loc and hasattr(loc, 'name') else loc_id
             lines.append(f"   └──{char_name} 在 {loc_name}")
         
         return ToolResult(success=True, content="\n".join(lines), data=point)
     
     else:
         # 返回整个时间轴
+        if not hasattr(context.timeline, 'get_ordered_points'):
+            return ToolResult(success=False, content="时间轴不支持列表查询")
+        
         points = context.timeline.get_ordered_points()
         lines = ["时间轴"]
         
         for i, p in enumerate(points):
-            is_current = p.id == context.current_point_id
+            is_current = hasattr(p, 'id') and p.id == current_point_id
             marker = "└──" if i == len(points) - 1 else "├──"
             current_mark = " ★当前" if is_current else ""
-            lines.append(f"{marker}{p.label}{current_mark}")
+            label = p.label if hasattr(p, 'label') else str(p)
+            lines.append(f"{marker}{label}{current_mark}")
             
             # 显示该时间点的角色位置
-            if p.character_locations:
-                for char_id, loc_id in p.character_locations.items():
-                    char = context.characters.get(char_id)
-                    loc = context.world_map.get_location(loc_id) if context.world_map else None
+            char_locs = p.character_locations if hasattr(p, 'character_locations') else {}
+            if char_locs:
+                for char_id, loc_id in char_locs.items():
+                    char = context.characters.get(char_id) if context.characters else None
+                    loc = context.world_map.get_location(loc_id) if context.world_map and hasattr(context.world_map, 'get_location') else None
                     prefix = "   └──" if i == len(points) - 1 else "│  └──"
-                    lines.append(f"{prefix}{char.name if char else char_id} 在 {loc.name if loc else loc_id}")
+                    char_name = char.name if char and hasattr(char, 'name') else char_id
+                    loc_name = loc.name if loc and hasattr(loc, 'name') else loc_id
+                    lines.append(f"{prefix}{char_name} 在 {loc_name}")
         
         return ToolResult(success=True, content="\n".join(lines))
 
@@ -640,41 +902,60 @@ def suggest_next(context: Any, current_situation: str = "") -> ToolResult:
         发展建议
     """
     suggestions = []
+    current_point_id = context.current_point_id if hasattr(context, 'current_point_id') else None
     
     # 基于时间轴建议
-    if context.timeline:
+    if context.timeline and hasattr(context.timeline, 'get_ordered_points'):
         points = context.timeline.get_ordered_points()
-        if context.current_point_id:
+        if current_point_id:
             current_idx = None
             for i, p in enumerate(points):
-                if p.id == context.current_point_id:
+                p_id = p.id if hasattr(p, 'id') else None
+                if p_id == current_point_id:
                     current_idx = i
                     break
             
             if current_idx is not None:
                 if current_idx < len(points) - 1:
                     next_point = points[current_idx + 1]
-                    suggestions.append(f"下一时间点: {next_point.label}")
+                    label = next_point.label if hasattr(next_point, 'label') else str(next_point)
+                    suggestions.append(f"下一时间点: {label}")
                 else:
                     suggestions.append("已达时间轴末尾，可考虑创建新时间点")
     
     # 基于角色状态建议
     if context.characters:
         for char_id, char in context.characters.items():
-            if char.last_action and not char.last_result:
-                suggestions.append(f"角色 {char.name} 有待处理的行动: {char.last_action}")
+            last_action = char.last_action if hasattr(char, 'last_action') else ""
+            last_result = char.last_result if hasattr(char, 'last_result') else ""
+            name = char.name if hasattr(char, 'name') else char_id
             
-            future_abilities = char.get_future_abilities()
-            if future_abilities:
-                suggestions.append(f"角色 {char.name} 有待解锁的能力: {', '.join(a.name for a in future_abilities)}")
+            if last_action and not last_result:
+                suggestions.append(f"角色 {name} 有待处理的行动: {last_action}")
+            
+            if hasattr(char, 'get_future_abilities'):
+                future_abilities = char.get_future_abilities()
+                if future_abilities:
+                    ability_names = []
+                    for a in future_abilities:
+                        if hasattr(a, 'name'):
+                            ability_names.append(a.name)
+                        else:
+                            ability_names.append(str(a))
+                    suggestions.append(f"角色 {name} 有待解锁的能力: {', '.join(ability_names)}")
     
     # 基于伏笔建议
-    if context.graph:
+    if context.graph and hasattr(context.graph, 'find_nodes_by_type'):
         from src.core.graph import NodeType
         foreshadows = context.graph.find_nodes_by_type(NodeType.FORESHADOW)
         if foreshadows:
-            unrevealed = [f.attrs.get('name', f.id) for f in foreshadows 
-                         if not f.attrs.get('revealed', False)]
+            unrevealed = []
+            for f in foreshadows:
+                attrs = f.attrs if hasattr(f, 'attrs') else {}
+                revealed = attrs.get('revealed', False)
+                if not revealed:
+                    name = attrs.get('name', f.id if hasattr(f, 'id') else str(f))
+                    unrevealed.append(name)
             if unrevealed:
                 suggestions.append(f"待揭示的伏笔: {', '.join(unrevealed[:3])}")
     
@@ -693,6 +974,43 @@ def suggest_next(context: Any, current_situation: str = "") -> ToolResult:
 def get_all_tools() -> dict[str, Tool]:
     """获取所有可用工具"""
     return {
+        # 完成工具（必须首先调用以结束任务）
+        "complete": Tool(
+            name="complete",
+            description="完成任务并提交最终内容。当你完成写作后，必须调用此工具提交内容！",
+            tool_type=ToolType.QUERY,
+            parameters={
+                "content": "最终完成的章节内容（必填）"
+            },
+            execute=complete
+        ),
+        # 章节查询工具
+        "query_previous_chapter": Tool(
+            name="query_previous_chapter",
+            description="查询已完成章节的内容，用于获取前文上下文",
+            tool_type=ToolType.QUERY,
+            parameters={
+                "chapter_num": "章节号（可选，默认查询上一章）"
+            },
+            execute=query_previous_chapter
+        ),
+        "query_chapter_outline": Tool(
+            name="query_chapter_outline",
+            description="查询指定章节的大纲/剧情要点",
+            tool_type=ToolType.QUERY,
+            parameters={
+                "chapter_num": "章节号（可选，默认查询当前章节）"
+            },
+            execute=query_chapter_outline
+        ),
+        "query_all_chapters": Tool(
+            name="query_all_chapters",
+            description="查询所有已完成章节的摘要列表",
+            tool_type=ToolType.QUERY,
+            parameters={},
+            execute=query_all_chapters
+        ),
+        # 角色查询工具
         "query_character": Tool(
             name="query_character",
             description="查询角色的详细信息，包括能力、状态、备注等",

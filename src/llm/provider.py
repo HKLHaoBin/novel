@@ -1,5 +1,18 @@
 """LLM 提供者适配层 - 封装 intelligence 库"""
 
+from dataclasses import dataclass, field
+from typing import Any, Callable
+
+
+@dataclass
+class ToolResult:
+    """工具执行结果"""
+    success: bool
+    content: str
+    issues: list[str] = field(default_factory=list)
+    data: Any = None
+
+
 # intelligence 库的导入
 try:
     from dawn_shuttle.dawn_shuttle_intelligence import (
@@ -13,11 +26,229 @@ try:
         DeepSeekProvider,
         MoonshotProvider,
         OpenAICompatibleProvider,
+        ToolCall,
     )
     INTELLIGENCE_AVAILABLE = True
-except ImportError:
+except ImportError as e:
     INTELLIGENCE_AVAILABLE = False
 
+
+def build_tool_definitions(tools: dict) -> list[dict]:
+    """
+    将工具字典转换为 OpenAI function calling 格式
+    
+    Args:
+        tools: 工具字典 {name: Tool}
+        
+    Returns:
+        OpenAI tools 格式的列表
+    """
+    definitions = []
+    
+    for name, tool in tools.items():
+        # 构建参数 schema
+        properties = {}
+        required = []
+        
+        for param_name, param_desc in tool.parameters.items():
+            properties[param_name] = {
+                "type": "string",
+                "description": param_desc
+            }
+            # 如果参数描述不包含"可选"，则视为必需
+            if "可选" not in param_desc:
+                required.append(param_name)
+        
+        definitions.append({
+            "type": "function",
+            "function": {
+                "name": name,
+                "description": tool.description,
+                "parameters": {
+                    "type": "object",
+                    "properties": properties,
+                    "required": required
+                }
+            }
+        })
+    
+    return definitions
+
+
+class ToolCallLoop:
+    """工具调用循环管理器"""
+    
+    def __init__(
+        self,
+        tools: dict,
+        context: Any,
+        max_iterations: int = 10,
+        on_tool_call: Callable[[str, dict], None] | None = None,
+    ):
+        """
+        初始化工具调用循环
+        
+        Args:
+            tools: 工具字典
+            context: 传递给工具的上下文
+            max_iterations: 最大迭代次数
+            on_tool_call: 工具调用回调
+        """
+        self.tools = tools
+        self.context = context
+        self.max_iterations = max_iterations
+        self.on_tool_call = on_tool_call
+        self.final_content: str | None = None
+    
+    async def execute_tool(self, name: str, arguments: dict) -> ToolResult:
+        """执行单个工具"""
+        if name not in self.tools:
+            return ToolResult(
+                success=False,
+                content=f"错误: 未知工具 '{name}'",
+                issues=[f"可用工具: {', '.join(self.tools.keys())}"]
+            )
+        
+        tool = self.tools[name]
+        try:
+            # 支持同步和异步工具
+            import asyncio
+            if asyncio.iscoroutinefunction(tool.execute):
+                result = await tool.execute(self.context, **arguments)
+            else:
+                result = tool.execute(self.context, **arguments)
+            
+            if self.on_tool_call:
+                self.on_tool_call(name, arguments)
+            
+            # 检测 complete 调用
+            if name == "complete" and result.success:
+                self.final_content = arguments.get("content", "")
+            
+            return result
+        except Exception as e:
+            import traceback
+            return ToolResult(
+                success=False,
+                content=f"工具执行错误: {str(e)}",
+                issues=[traceback.format_exc()]
+            )
+    
+    async def run(
+        self,
+        provider: "LLMProvider",
+        system_prompt: str,
+        user_prompt: str,
+        model: str = "",
+        temperature: float = 0.7,
+        max_tokens: int = 4000,
+    ) -> str:
+        """
+        运行工具调用循环
+        
+        Args:
+            provider: LLM 提供者
+            system_prompt: 系统提示词
+            user_prompt: 用户提示词
+            model: 模型名称
+            temperature: 温度
+            max_tokens: 最大 token
+            
+        Returns:
+            最终生成的内容
+        """
+        # 构建工具定义
+        tool_definitions = build_tool_definitions(self.tools)
+        
+        # 构建消息
+        messages = []
+        if system_prompt:
+            messages.append(Message.system(system_prompt))
+        messages.append(Message.user(user_prompt))
+        
+        iteration = 0
+        final_content = ""
+        
+        while iteration < self.max_iterations:
+            iteration += 1
+            
+            # 调用 LLM
+            response = await generate_text(
+                messages=messages,
+                provider=provider.get_raw_provider(),
+                model=model or provider.model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tool_definitions if tool_definitions else None,
+            )
+            
+            # 检查是否有工具调用
+            if response.tool_calls:
+                # 添加助手消息
+                # 需要将字典格式转换为 ToolCall 对象
+                formatted_tool_calls = []
+                for tc in response.tool_calls:
+                    if isinstance(tc, dict):
+                        formatted_tool_calls.append(ToolCall(
+                            id=tc.get("id", ""),
+                            name=tc.get("name", ""),
+                            arguments=tc.get("arguments", {})
+                        ))
+                    elif isinstance(tc, ToolCall):
+                        formatted_tool_calls.append(tc)
+                    else:
+                        # 可能是其他对象格式
+                        formatted_tool_calls.append(ToolCall(
+                            id=getattr(tc, "id", ""),
+                            name=getattr(tc, "name", "") or getattr(tc.function, "name", ""),
+                            arguments=getattr(tc, "arguments", {}) or getattr(tc.function, "arguments", {})
+                        ))
+                
+                messages.append(Message.assistant(
+                    content=response.text or "",
+                    tool_calls=formatted_tool_calls
+                ))
+                
+                # 执行每个工具调用
+                for tool_call in response.tool_calls:
+                    # intelligence 返回的是字典格式
+                    if isinstance(tool_call, dict):
+                        tool_name = tool_call.get("name", "")
+                        tool_args = tool_call.get("arguments", {})
+                        tool_id = tool_call.get("id", "")
+                    elif isinstance(tool_call, ToolCall):
+                        tool_name = tool_call.name
+                        tool_args = tool_call.arguments
+                        tool_id = tool_call.id
+                    else:
+                        tool_name = getattr(tool_call, "name", "") or getattr(tool_call.function, "name", "")
+                        tool_args = getattr(tool_call, "arguments", {}) or getattr(tool_call.function, "arguments", {})
+                        tool_id = getattr(tool_call, "id", "")
+                    
+                    # 执行工具
+                    tool_result = await self.execute_tool(tool_name, tool_args)
+                    
+                    # 检测 complete 调用
+                    if tool_name == "complete" and self.final_content is not None:
+                        return self.final_content
+                    
+                    # 添加工具结果消息
+                    messages.append(Message.tool_result(
+                        tool_call_id=tool_id,
+                        content=tool_result.content if hasattr(tool_result, 'content') else str(tool_result)
+                    ))
+                
+                # 继续循环让 LLM 处理工具结果
+                continue
+            
+            # 没有工具调用，返回最终内容
+            final_content = response.text
+            break
+        
+        if iteration >= self.max_iterations:
+            pass  # 达到最大迭代次数
+        
+        return final_content
 
 class LLMProvider:
     """LLM 提供者封装"""

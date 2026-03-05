@@ -81,15 +81,16 @@ class Designer(BaseAgent):
     async def _full_design(self, context: AgentContext) -> AgentResult:
         """完整设计流程"""
         results: list[AgentResult] = []
+        accumulated_content = ""  # 累积的设计内容
         
-        # 按顺序执行五个阶段
         # seed 阶段需要额外参数
-        seed_result = await self._design_seed(context, context.user_input)
+        seed_result = await self._design_seed(context, context.user_input, accumulated_content)
         if not seed_result.success:
             return seed_result
         results.append(seed_result)
+        accumulated_content += f"\n\n【核心种子】\n{seed_result.content}"
         
-        # 后续阶段
+        # 后续阶段，传递累积的内容
         phases: list[tuple[str, object]] = [
             ("character", self._design_characters),
             ("world", self._design_world),
@@ -98,24 +99,23 @@ class Designer(BaseAgent):
         ]
         
         for phase_name, phase_func in phases:
+            # 将累积内容传入 context.extra
+            context.extra["accumulated_design"] = accumulated_content
             result = await phase_func(context)  # type: ignore[operator]
             if not result.success:
                 return result
             results.append(result)
-        
-        # 合并结果
-        all_content = "\n\n".join(f"【{r.content.split('】')[0][1:] if '】' in r.content else phase_name}】\n{r.content}" 
-                                   for r, (_, phase_func) in zip(results, phases))
+            accumulated_content += f"\n\n【{phase_name}】\n{result.content}"
         
         return AgentResult(
             success=True,
-            content=all_content,
+            content=accumulated_content,
             nodes_to_add=[n for r in results for n in r.nodes_to_add],
             edges_to_add=[e for r in results for e in r.edges_to_add],
             timepoints_to_add=[t for r in results for t in r.timepoints_to_add],
         )
     
-    async def _design_seed(self, context: AgentContext, user_input: str) -> AgentResult:
+    async def _design_seed(self, context: AgentContext, user_input: str, accumulated: str = "") -> AgentResult:
         """设计核心种子"""
         total_chapters = context.extra.get("total_chapters", 20)
         word_count = context.extra.get("word_count_per_chapter", 3000)
@@ -130,6 +130,7 @@ class Designer(BaseAgent):
 - 每章字数：约{word_count}字
 - 必须包含显性冲突与潜在危机
 - 使用25-100字精准表达
+- 必须严格遵循用户需求中的设定（时代背景、角色身份等）
 
 【输出格式】
 核心种子
@@ -154,18 +155,20 @@ class Designer(BaseAgent):
     
     async def _design_characters(self, context: AgentContext) -> AgentResult:
         """设计角色"""
-        ctx_text = build_quick_reference(context)
-        user_guidance = context.extra.get("user_guidance", context.user_input)
+        # 获取累积的设计内容和用户原始需求
+        accumulated = context.extra.get("accumulated_design", "")
+        user_guidance = context.user_input
         
         prompt = f"""请基于以下信息，设计小说的主要角色。
 
-【用户指导】
+【用户原始需求】
 {user_guidance}
 
-【已有上下文】
-{ctx_text if ctx_text else "无"}
+【已确定的核心设定】
+{accumulated if accumulated else "无"}
 
 【设计要求】
+- 必须严格遵循用户原始需求中的角色设定（姓名、身份、时代背景等）
 - 设计3-6个核心角色
 - 每个角色必须有：驱动力三角、角色弧线、关系网
 - 角色之间必须有价值观冲突和合作纽带
@@ -173,7 +176,7 @@ class Designer(BaseAgent):
 【输出格式】
 角色设计
 │
-├── 主角：[名字]
+├── 主角：[名字]（必须使用用户指定的名字！）
 │   ├── 基本信息：年龄|性别|职业|外貌
 │   ├── 背景秘密：[...]
 │   ├── 驱动力三角：
@@ -198,14 +201,18 @@ class Designer(BaseAgent):
     
     async def _design_world(self, context: AgentContext) -> AgentResult:
         """设计世界观"""
-        ctx_text = build_quick_reference(context)
+        accumulated = context.extra.get("accumulated_design", "")
         
         prompt = f"""请基于以下信息，设计小说的世界观。
 
-【已有上下文】
-{ctx_text if ctx_text else context.user_input}
+【用户原始需求】
+{context.user_input}
+
+【已确定的核心设定】
+{accumulated if accumulated else "无"}
 
 【设计要求】
+- 必须与用户需求的年代背景一致
 - 构建三维交织的世界观：物理、社会、隐喻
 - 每个维度至少3个可与角色决策互动的动态元素
 - 世界观服务于叙事
@@ -239,14 +246,18 @@ class Designer(BaseAgent):
     
     async def _design_plot(self, context: AgentContext) -> AgentResult:
         """设计情节架构"""
-        ctx_text = build_quick_reference(context)
+        accumulated = context.extra.get("accumulated_design", "")
         
         prompt = f"""请基于以下信息，设计小说的情节架构。
 
-【已有上下文】
-{ctx_text if ctx_text else context.user_input}
+【用户原始需求】
+{context.user_input}
+
+【已确定的核心设定】
+{accumulated if accumulated else "无"}
 
 【设计要求】
+- 必须与角色设定和世界观保持一致
 - 使用三幕式结构
 - 第一幕约25%，第二幕约50%，第三幕约25%
 - 高潮必须回应所有主线问题
@@ -281,15 +292,19 @@ class Designer(BaseAgent):
     
     async def _design_blueprint(self, context: AgentContext) -> AgentResult:
         """设计章节蓝图"""
-        ctx_text = build_quick_reference(context)
+        accumulated = context.extra.get("accumulated_design", "")
         total_chapters = context.extra.get("total_chapters", 20)
         
         prompt = f"""请基于以下信息，设计小说的章节蓝图。
 
-【已有上下文】
-{ctx_text if ctx_text else context.user_input}
+【用户原始需求】
+{context.user_input}
+
+【已确定的核心设定】
+{accumulated if accumulated else "无"}
 
 【设计要求】
+- 必须与角色设定和世界观保持一致
 - 总共{total_chapters}章
 - 每3-5章构成一个悬念单元
 - 每章100字大纲

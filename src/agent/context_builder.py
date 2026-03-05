@@ -20,6 +20,13 @@ def build_full_context(context: Any) -> str:
     
     parts = []
     
+    # ========== 设计大纲（优先级最高）==========
+    if hasattr(context, 'extra') and context.extra.get("global_summary"):
+        parts.append("═" * 40)
+        parts.append("【小说设计大纲】")
+        parts.append("═" * 40)
+        parts.append(context.extra["global_summary"])
+    
     # ========== 世界观 ==========
     if context.graph:
         world_nodes = context.graph.find_nodes_by_type(NodeType.WORLD)

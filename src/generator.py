@@ -127,8 +127,11 @@ class NovelGenerator:
         result = await self.designer.execute(agent_ctx)
         
         if result.success:
-            # 保存设计结果
-            self.novel_ctx.global_summary = result.content
+            # 保存设计结果到 snapshot
+            self.novel_ctx.snapshot.global_summary = result.content
+            
+            # 保存 snapshot
+            self.coordinator.state_manager.save_draft(self.novel_ctx.snapshot)
             
             # 存入知识库
             if self.knowledge:
@@ -175,11 +178,24 @@ class NovelGenerator:
         
         self._report_progress("writing", f"正在撰写第{chapter_num}章...")
         
+        # 获取已完成章节内容（用于上下文）
+        completed_chapters = {}
+        for ch_num in self.novel_ctx.snapshot.progress.completed_chapters:
+            content = self.coordinator.state_manager.load_chapter(
+                self.novel_ctx.snapshot.title, ch_num
+            )
+            if content:
+                completed_chapters[str(ch_num)] = content
+        
         # 构建 Agent 上下文
         agent_ctx = self._build_agent_context()
         agent_ctx.extra["chapter_num"] = chapter_num
         agent_ctx.extra["chapter_blueprint"] = blueprint
         agent_ctx.extra["word_count"] = 3000  # TODO: 从配置读取
+        agent_ctx.extra["completed_chapters"] = completed_chapters
+        agent_ctx.extra["state_manager"] = self.coordinator.state_manager
+        agent_ctx.extra["novel_title"] = self.novel_ctx.snapshot.title
+        agent_ctx.extra["global_summary"] = self.novel_ctx.snapshot.global_summary  # 传递设计大纲
         agent_ctx.knowledge = self.knowledge
         
         # 写作

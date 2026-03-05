@@ -120,9 +120,54 @@ async def cmd_create(args: argparse.Namespace) -> int:
             result = await generator.design()
             
             if result.success:
-                print("设计完成!")
-                if args.verbose:
-                    print(result.content[:500] + "...")
+                if args.interactive:
+                    # 交互模式：显示设计结果并等待用户确认
+                    print("\n" + "="*60)
+                    print("设计结果预览:")
+                    print("="*60)
+                    print(result.content)
+                    print("="*60)
+                    
+                    while True:
+                        user_input = input("\n选项: [确认/修改/重做/取消]: ").strip().lower()
+                        
+                        if user_input in ["确认", "y", "yes", "ok"]:
+                            print("设计已确认!")
+                            break
+                        elif user_input in ["修改", "m", "modify"]:
+                            print("\n请输入修改建议（输入空行结束）:")
+                            lines = []
+                            while True:
+                                line = input()
+                                if not line:
+                                    break
+                                lines.append(line)
+                            
+                            if lines:
+                                modification = "\n".join(lines)
+                                print("\n正在根据修改建议调整设计...")
+                                # 重新设计，带上修改意见
+                                result = await generator.design()
+                                if result.success:
+                                    print("\n调整后的设计:")
+                                    print(result.content)
+                                else:
+                                    print(f"调整失败: {result.error}")
+                        elif user_input in ["重做", "r", "redo"]:
+                            print("\n正在重新设计...")
+                            result = await generator.design()
+                            if result.success:
+                                print("\n新的设计结果:")
+                                print(result.content)
+                            else:
+                                print(f"重做失败: {result.error}")
+                        elif user_input in ["取消", "c", "cancel", "q"]:
+                            print("已取消设计")
+                            return 1
+                else:
+                    print("设计完成!")
+                    if args.verbose:
+                        print(result.content[:500] + "...")
             else:
                 print(f"设计失败: {result.error}")
                 return 1
@@ -167,13 +212,55 @@ async def cmd_design(args: argparse.Namespace) -> int:
         result = await generator.design()
         
         if result.success:
-            print("\n设计完成!\n")
+            if args.interactive:
+                # 交互模式
+                print("\n" + "="*60)
+                print("设计结果:")
+                print("="*60)
+                print(result.content)
+                print("="*60)
+                
+                while True:
+                    user_input = input("\n选项: [确认/修改/重做/取消]: ").strip().lower()
+                    
+                    if user_input in ["确认", "y", "yes", "ok"]:
+                        print("设计已确认!")
+                        break
+                    elif user_input in ["修改", "m", "modify"]:
+                        print("\n请输入修改建议（输入空行结束）:")
+                        lines = []
+                        while True:
+                            line = input()
+                            if not line:
+                                break
+                            lines.append(line)
+                        
+                        if lines:
+                            print("\n正在根据修改建议调整设计...")
+                            result = await generator.design()
+                            if result.success:
+                                print("\n调整后的设计:")
+                                print(result.content)
+                            else:
+                                print(f"调整失败: {result.error}")
+                    elif user_input in ["重做", "r", "redo"]:
+                        print("\n正在重新设计...")
+                        result = await generator.design()
+                        if result.success:
+                            print("\n新的设计结果:")
+                            print(result.content)
+                        else:
+                            print(f"重做失败: {result.error}")
+                    elif user_input in ["取消", "c", "cancel", "q"]:
+                        print("已取消设计")
+                        return 1
             
             if args.output:
                 with open(args.output, "w", encoding="utf-8") as f:
                     f.write(result.content)
                 print(f"设计结果已保存到: {args.output}")
-            else:
+            elif not args.interactive:
+                print("\n设计完成!\n")
                 print(result.content)
         else:
             print(f"设计失败: {result.error}")
@@ -394,6 +481,7 @@ def main() -> int:
     create_parser.add_argument("--chapters", "-c", type=int, default=20, help="总章节数 (默认: 20)")
     create_parser.add_argument("--words", "-w", type=int, default=3000, help="每章字数 (默认: 3000)")
     create_parser.add_argument("--design", "-d", action="store_true", help="创建后立即设计")
+    create_parser.add_argument("--interactive", "-i", action="store_true", help="交互模式，设计后等待确认")
     create_parser.add_argument("--save-dir", help="保存目录")
     create_parser.add_argument("--db", help="知识库数据库路径")
     create_parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
@@ -402,6 +490,7 @@ def main() -> int:
     design_parser = subparsers.add_parser("design", help="执行架构设计")
     design_parser.add_argument("title", help="小说标题")
     design_parser.add_argument("--output", "-o", help="输出文件")
+    design_parser.add_argument("--interactive", "-i", action="store_true", help="交互模式")
     design_parser.add_argument("--save-dir", help="保存目录")
     
     # write 命令
