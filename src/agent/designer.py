@@ -91,32 +91,8 @@ class Designer(BaseAgent):
         is_expand_task = "扩展任务" in user_guidance and existing_design
 
         if is_expand_task:
-            # 扩展模式：保留原有设计，只重新生成章节蓝图
-            accumulated_content = existing_design
-            print("[Designer] 检测到扩展任务，保留原有核心设定...")
-
-            # 直接跳到 blueprint 阶段
-            context.extra["accumulated_design"] = accumulated_content
-            blueprint_result = await self._design_blueprint(context)
-            if not blueprint_result.success:
-                return blueprint_result
-
-            # 合并原有设计和新的蓝图
-            final_content = existing_design.replace(
-                existing_design.split("【blueprint】")[-1]
-                if "【blueprint】" in existing_design
-                else "",
-                "",
-            )
-            final_content = (
-                final_content.strip()
-                + f"\n\n【blueprint】\n{blueprint_result.content}"
-            )
-
-            return AgentResult(
-                success=True,
-                content=final_content,
-            )
+            # 扩展模式：保留原有设计，扩展章节蓝图并更新数据结构
+            return await self._expand_design(context, existing_design, user_guidance)
 
         # 正常设计流程
         # seed 阶段需要额外参数
@@ -156,6 +132,245 @@ class Designer(BaseAgent):
             edges_to_add=[e for r in results for e in r.edges_to_add],
             timepoints_to_add=[t for r in results for t in r.timepoints_to_add],
         )
+
+    async def _expand_design(
+        self, context: AgentContext, existing_design: str, user_guidance: str
+    ) -> AgentResult:
+        """
+        扩展设计：在保留原有设定的基础上扩展章节规划
+
+        Args:
+            context: Agent 上下文
+            existing_design: 已有的设计内容
+            user_guidance: 用户指导（包含扩展任务信息）
+
+        Returns:
+            扩展后的设计结果
+        """
+        import re
+
+        print("[Designer] 执行扩展设计模式...")
+
+        # 解析原有章节数和目标章节数
+        match = re.search(r"原有(\d+)章.*扩展到(\d+)章", user_guidance)
+        if not match:
+            return AgentResult(success=False, error="无法解析扩展任务参数")
+
+        old_chapters = int(match.group(1))
+        new_chapters = int(match.group(2))
+        print(f"[Designer] 从 {old_chapters} 章扩展到 {new_chapters} 章")
+
+        # 1. 生成新的章节蓝图
+        context.extra["accumulated_design"] = existing_design
+        blueprint_result = await self._design_blueprint(context)
+        if not blueprint_result.success:
+            return blueprint_result
+
+        new_blueprint = blueprint_result.content
+
+        # 2. 解析新章节内容，提取新增元素
+        expand_result = await self._extract_expand_elements(
+            context, existing_design, new_blueprint, old_chapters, new_chapters
+        )
+
+        # 3. 合并原有设计和新的蓝图
+        final_content = existing_design.replace(
+            existing_design.split("【blueprint】")[-1]
+            if "【blueprint】" in existing_design
+            else "",
+            "",
+        )
+        final_content = (
+            final_content.strip() + f"\n\n【blueprint】\n{new_blueprint}"
+        )
+
+        return AgentResult(
+            success=True,
+            content=final_content,
+            nodes_to_add=expand_result.get("nodes", []),
+            edges_to_add=expand_result.get("edges", []),
+            timepoints_to_add=expand_result.get("timepoints", []),
+        )
+
+    async def _extract_expand_elements(
+        self,
+        context: AgentContext,
+        existing_design: str,
+        new_blueprint: str,
+        old_chapters: int,
+        new_chapters: int,
+    ) -> dict:
+        """
+        从新的章节蓝图中提取需要添加的元素
+
+        Args:
+            context: Agent 上下文
+            existing_design: 已有的设计内容
+            new_blueprint: 新生成的章节蓝图
+            old_chapters: 原有章节数
+            new_chapters: 目标章节数
+
+        Returns:
+            包含 nodes, edges, timepoints 的字典
+        """
+        import re
+
+        from src.core.character import CharacterCard
+        from src.core.graph import Node, NodeType
+        from src.core.graph.timeline import TimePoint
+        from src.core.map import Location, LocationType
+
+        nodes: list[Node] = []
+        edges: list = []  # 预留给未来的边
+        timepoints: list[TimePoint] = []
+
+        # 获取现有角色和地点（避免重复添加）
+        existing_characters = (
+            set(context.characters.keys()) if context.characters else set()
+        )
+        existing_locations = set()
+        if context.world_map:
+            for loc in context.world_map.locations.values():
+                existing_locations.add(loc.name)
+
+        # 使用 LLM 提取新增元素
+        extract_prompt = f"""请分析以下新章节规划，提取需要添加的元素。
+
+【原有设计】
+{existing_design[:2000]}...
+
+【新增章节规划】
+{new_blueprint}
+
+【原有章节数】{old_chapters}
+【目标章节数】{new_chapters}
+
+请提取：
+1. 新角色（不在原有设计中的角色）
+2. 新地点（不在原有设计中的地点）
+3. 重大事件（新增章节中的关键情节节点）
+
+【输出格式】
+## 新增角色
+- 角色名 | 身份 | 简介
+
+## 新增地点
+- 地点名 | 类型 | 简介
+
+## 新增事件
+- 第X章 | 事件名 | 涉及角色 | 事件简介
+
+如果没有新增内容，输出"无新增元素"。"""
+
+        extract_result = await self._call_llm(extract_prompt)
+
+        # 解析 LLM 输出，添加到数据结构
+        lines = extract_result.split("\n")
+        current_section = ""
+
+        for line in lines:
+            line = line.strip()
+            if not line:
+                continue
+
+            if "## 新增角色" in line:
+                current_section = "character"
+            elif "## 新增地点" in line:
+                current_section = "location"
+            elif "## 新增事件" in line:
+                current_section = "event"
+            elif line.startswith("- "):
+                content = line[2:].strip()
+                if current_section == "character":
+                    parts = content.split("|")
+                    if len(parts) >= 2:
+                        char_name = parts[0].strip()
+                        if char_name and char_name not in existing_characters:
+                            char_id = f"char_{char_name}"
+                            char_role = parts[1].strip() if len(parts) > 1 else "配角"
+                            char_desc = parts[2].strip() if len(parts) > 2 else ""
+                            card = CharacterCard(
+                                id=char_id,
+                                name=char_name,
+                                attrs={"role": char_role, "description": char_desc},
+                            )
+                            context.characters[char_id] = card
+                            # 添加角色节点
+                            node = Node(
+                                id=f"node_{char_id}",
+                                type=NodeType.CHARACTER,
+                                attrs={"name": char_name, "role": char_role},
+                            )
+                            nodes.append(node)
+                            print(f"[Designer] 添加新角色: {char_name}")
+
+                elif current_section == "location":
+                    parts = content.split("|")
+                    if len(parts) >= 2:
+                        loc_name = parts[0].strip()
+                        if loc_name and loc_name not in existing_locations:
+                            loc_type_str = (
+                                parts[1].strip() if len(parts) > 1 else "地点"
+                            )
+                            # 映射地点类型
+                            loc_type_map = {
+                                "城市": LocationType.CITY,
+                                "城镇": LocationType.CITY,
+                                "建筑": LocationType.BUILDING,
+                                "区域": LocationType.REGION,
+                                "国家": LocationType.REGION,
+                            }
+                            loc_type = loc_type_map.get(
+                                loc_type_str, LocationType.REGION
+                            )
+                            loc = Location(
+                                id=f"loc_{loc_name}",
+                                name=loc_name,
+                                type=loc_type,
+                                description=parts[2].strip() if len(parts) > 2 else "",
+                            )
+                            if context.world_map:
+                                context.world_map.add_location(loc)
+                            existing_locations.add(loc_name)
+                            print(f"[Designer] 添加新地点: {loc_name}")
+
+                elif current_section == "event":
+                    parts = content.split("|")
+                    if len(parts) >= 2:
+                        chapter_info = parts[0].strip()
+                        event_name = parts[1].strip()
+                        # 提取章节号
+                        chapter_match = re.search(r"第(\d+)章", chapter_info)
+                        if chapter_match:
+                            chapter_num = int(chapter_match.group(1))
+                            if chapter_num > old_chapters:
+                                # 添加时间点和事件节点
+                                tp = TimePoint(
+                                    id=f"tp_ch{chapter_num}_{event_name}",
+                                    label=f"第{chapter_num}章: {event_name}",
+                                    attrs={"chapter": chapter_num, "event": event_name},
+                                )
+                                timepoints.append(tp)
+
+                                event_node = Node(
+                                    id=f"event_ch{chapter_num}_{event_name}",
+                                    type=NodeType.EVENT,
+                                    attrs={
+                                        "name": event_name,
+                                        "chapter": chapter_num,
+                                        "description": parts[3].strip()
+                                        if len(parts) > 3
+                                        else "",
+                                    },
+                                    time_point_id=tp.id,
+                                )
+                                nodes.append(event_node)
+                                print(
+                                    "[Designer] "
+                                    f"添加新事件: 第{chapter_num}章 {event_name}"
+                                )
+
+        return {"nodes": nodes, "edges": edges, "timepoints": timepoints}
 
     async def _design_seed(
         self, context: AgentContext, user_input: str, accumulated: str = ""
