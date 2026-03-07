@@ -85,6 +85,40 @@ class Designer(BaseAgent):
         results: list[AgentResult] = []
         accumulated_content = ""  # 累积的设计内容
 
+        # 检查是否是扩展设计任务
+        user_guidance = context.extra.get("user_guidance", "")
+        existing_design = context.extra.get("global_summary", "")
+        is_expand_task = "扩展任务" in user_guidance and existing_design
+
+        if is_expand_task:
+            # 扩展模式：保留原有设计，只重新生成章节蓝图
+            accumulated_content = existing_design
+            print("[Designer] 检测到扩展任务，保留原有核心设定...")
+
+            # 直接跳到 blueprint 阶段
+            context.extra["accumulated_design"] = accumulated_content
+            blueprint_result = await self._design_blueprint(context)
+            if not blueprint_result.success:
+                return blueprint_result
+
+            # 合并原有设计和新的蓝图
+            final_content = existing_design.replace(
+                existing_design.split("【blueprint】")[-1]
+                if "【blueprint】" in existing_design
+                else "",
+                "",
+            )
+            final_content = (
+                final_content.strip()
+                + f"\n\n【blueprint】\n{blueprint_result.content}"
+            )
+
+            return AgentResult(
+                success=True,
+                content=final_content,
+            )
+
+        # 正常设计流程
         # seed 阶段需要额外参数
         seed_result = await self._design_seed(
             context, context.user_input, accumulated_content
@@ -311,16 +345,70 @@ class Designer(BaseAgent):
         """设计章节蓝图"""
         accumulated = context.extra.get("accumulated_design", "")
         total_chapters = context.extra.get("total_chapters", 20)
+        user_guidance = context.extra.get("user_guidance", "")
 
-        prompt = f"""请基于以下信息，设计小说的章节蓝图。
+        # 检查是否是扩展任务
+        is_expand = "扩展任务" in user_guidance
+
+        if is_expand:
+            # 扩展模式：只规划新增的章节
+            import re
+
+            match = re.search(r"原有(\d+)章.*扩展到(\d+)章", user_guidance)
+            if match:
+                old_chapters = int(match.group(1))
+                new_chapters = int(match.group(2))
+                prompt = f"""请基于以下信息，为小说扩展章节蓝图。
 
 【用户原始需求】
 {context.user_input}
 
-【已确定的核心设定】
-{accumulated if accumulated else "无"}
+【已有的完整设计】
+{accumulated}
 
-【设计要求】
+【扩展任务】
+- 原有{old_chapters}章已规划完成
+- 需要扩展到{new_chapters}章
+- 请继续规划第{old_chapters + 1}章到第{new_chapters}章
+- 保持与已有设定的一致性
+- 延续故事主线，发展新的支线
+
+【输出格式】
+章节蓝图（续）
+│
+├── 第{old_chapters + 1}章 [标题]
+│   ├── 定位：[角色/事件/主题]
+│   ├── 作用：[推进/转折/揭示/铺垫]
+│   ├── 悬念：[信息差/道德困境/时间压力]
+│   ├── 大纲：[一句话，100字内]
+│
+├── 第{old_chapters + 2}章 [标题]
+│   └── ...
+...
+
+如果章节数量较多（超过50章），请分卷规划：
+卷名
+├── 第X-Y章：[本卷主题]
+│   ├── 核心事件
+│   ├── 角色发展
+│   └── 伏笔埋设
+
+仅输出新增章节的规划内容。"""
+            else:
+                prompt = f"""请基于已有设计，扩展章节蓝图。
+
+【已有设计】
+{accumulated}
+
+【目标】
+总共{total_chapters}章
+
+请继续扩展章节规划。"""
+        else:
+            # 正常设计模式
+            # 根据章节数量决定输出格式
+            if total_chapters <= 50:
+                format_hint = f"""【设计要求】
 - 必须与角色设定和世界观保持一致
 - 总共{total_chapters}章
 - 每3-5章构成一个悬念单元
@@ -340,7 +428,45 @@ class Designer(BaseAgent):
 │
 ├── 第2章 [标题]
 │   └── ...
+..."""
+            else:
+                # 大规模章节：分卷规划
+                format_hint = f"""【设计要求】
+- 必须与角色设定和世界观保持一致
+- 总共{total_chapters}章，需要分卷规划
+- 每10-30章构成一卷
+- 每卷有明确的主题和核心冲突
+- 最后1-2卷是高潮和结局
+
+【输出格式】
+章节蓝图
+│
+├── 第一卷 [卷名]（第1-X章）
+│   ├── 主题：[本卷核心主题]
+│   ├── 核心冲突：[本卷主要矛盾]
+│   ├── 开篇事件：[...]
+│   ├── 高潮事件：[...]
+│   ├── 结尾悬念：[...]
+│   └── 关键章节：
+│       ├── 第1章 [标题]：[一句话大纲]
+│       ├── 第X章 [标题]：[一句话大纲]
+│       └── ...
+│
+├── 第二卷 [卷名]（第X+1-Y章）
+│   └── ...
 ...
+
+总计{total_chapters}章。"""
+
+            prompt = f"""请基于以下信息，设计小说的章节蓝图。
+
+【用户原始需求】
+{context.user_input}
+
+【已确定的核心设定】
+{accumulated if accumulated else "无"}
+
+{format_hint}
 
 仅输出章节蓝图内容，不要解释。"""
 

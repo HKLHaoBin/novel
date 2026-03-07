@@ -237,14 +237,30 @@ async def cmd_design(args: argparse.Namespace) -> int:
             print("已清除旧的设计，将重新设计...")
 
         # 更新章节数（如果指定）
-        if args.chapters:
+        old_chapters = novel_ctx.snapshot.progress.total_chapters
+        need_expand = False
+        if args.chapters and args.chapters != old_chapters:
             novel_ctx.snapshot.progress.total_chapters = args.chapters
-            # 如果章节数改变了，也清除旧设计
-            novel_ctx.snapshot.global_summary = ""
-            novel_ctx.global_summary = ""
             generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
-            print(f"目标章节数已更新为: {args.chapters}")
-            print("已清除旧的设计，将重新设计...")
+            print(f"目标章节数已更新: {old_chapters} → {args.chapters}")
+            # 标记需要扩展设计
+            if novel_ctx.global_summary:
+                need_expand = True
+                print("将在现有设计基础上扩展章节规划...")
+
+        # 检查是否已有设计
+        if novel_ctx.global_summary and not args.force and not need_expand:
+            print(f"《{args.title}》已有设计，使用 'design --force' 强制重新设计")
+            return 0
+
+        # 标记是否为扩展设计
+        if need_expand:
+            novel_ctx.snapshot.user_guidance = (
+                f"{novel_ctx.snapshot.user_guidance}\n"
+                f"[扩展任务] 原有{old_chapters}章，现在需要扩展到{args.chapters}章，"
+                f"请在保留原有核心设定和已完成章节规划的基础上，扩展后续章节大纲。"
+            )
+            generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
 
         print(f"正在为《{args.title}》进行架构设计...")
 
