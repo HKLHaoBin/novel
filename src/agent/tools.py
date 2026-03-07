@@ -1071,11 +1071,445 @@ def suggest_next(context: Any, current_situation: str = "") -> ToolResult:
     )
 
 
+# =============== 设计工具 ===============
+
+
+def design_add_character(
+    context: Any,
+    name: str,
+    role: str = "配角",
+    description: str = "",
+    personality: str = "",
+    background: str = "",
+) -> ToolResult:
+    """
+    添加角色到设计中
+
+    Args:
+        context: AgentContext
+        name: 角色名称
+        role: 角色定位（主角/反派/配角/龙套）
+        description: 角色简介
+        personality: 性格特点
+        background: 背景故事
+    """
+    from src.core.character import CharacterCard
+
+    if not context.characters:
+        context.characters = {}
+
+    # 检查是否已存在
+    if name in context.characters:
+        return ToolResult(
+            success=False,
+            content=f"角色 '{name}' 已存在",
+            suggestions=["使用不同的角色名，或使用 update_character 更新现有角色"],
+        )
+
+    char_id = f"char_{name}"
+    char = CharacterCard(
+        id=char_id,
+        name=name,
+        attrs={
+            "role": role,
+            "description": description,
+            "personality": personality,
+            "background": background,
+        },
+    )
+    context.characters[char_id] = char
+
+    return ToolResult(
+        success=True,
+        content=f"已添加角色: {name}（{role}）",
+        data={"character_id": char_id, "character": char},
+    )
+
+
+def design_add_location(
+    context: Any,
+    name: str,
+    loc_type: str = "其他",
+    description: str = "",
+    significance: str = "",
+) -> ToolResult:
+    """
+    添加地点到世界地图
+
+    Args:
+        context: AgentContext
+        name: 地点名称
+        loc_type: 地点类型（城市/建筑/自然/室内/其他）
+        description: 地点描述
+        significance: 剧情意义
+    """
+    from src.core.map import Location, LocationType
+
+    if not context.world_map:
+        from src.core.map import WorldMap
+
+        context.world_map = WorldMap()
+
+    # 检查是否已存在
+    for loc in context.world_map.locations.values():
+        if loc.name == name:
+            return ToolResult(
+                success=False,
+                content=f"地点 '{name}' 已存在",
+                suggestions=["使用不同的地点名"],
+            )
+
+    type_map = {
+        "世界": LocationType.WORLD,
+        "大陆": LocationType.CONTINENT,
+        "国家": LocationType.COUNTRY,
+        "区域": LocationType.REGION,
+        "城市": LocationType.CITY,
+        "区": LocationType.DISTRICT,
+        "建筑": LocationType.BUILDING,
+        "房间": LocationType.ROOM,
+        "其他": LocationType.OTHER,
+    }
+    location_type = type_map.get(loc_type, LocationType.OTHER)
+
+    loc_id = f"loc_{name}"
+    loc = Location(
+        id=loc_id,
+        name=name,
+        type=location_type,
+        description=description,
+    )
+    context.world_map.add_location(loc)
+
+    return ToolResult(
+        success=True,
+        content=f"已添加地点: {name}（{loc_type}）",
+        data={"location_id": loc_id, "location": loc},
+    )
+
+
+def design_add_event(
+    context: Any,
+    name: str,
+    chapter: int,
+    description: str = "",
+    characters: str = "",
+    location: str = "",
+) -> ToolResult:
+    """
+    添加事件到时间轴和图结构
+
+    Args:
+        context: AgentContext
+        name: 事件名称
+        chapter: 所在章节
+        description: 事件描述
+        characters: 涉及角色（逗号分隔）
+        location: 发生地点
+    """
+    from src.core.graph import Node, NodeType
+    from src.core.graph.timeline import TimePoint
+
+    # 类型转换
+    if isinstance(chapter, str):
+        chapter = int(chapter) if chapter.isdigit() else 1
+
+    # 添加时间点
+    tp_id = f"tp_ch{chapter}_{name}"
+    tp = TimePoint(
+        id=tp_id,
+        label=f"第{chapter}章: {name}",
+        attrs={"chapter": chapter, "event": name, "description": description},
+    )
+    context.timeline.append(tp)
+
+    # 添加事件节点
+    event_id = f"event_ch{chapter}_{name}"
+    event_node = Node(
+        id=event_id,
+        type=NodeType.EVENT,
+        attrs={
+            "name": name,
+            "chapter": chapter,
+            "description": description,
+            "characters": characters,
+            "location": location,
+        },
+        time_point_id=tp_id,
+    )
+    context.graph.add_node(event_node)
+
+    return ToolResult(
+        success=True,
+        content=f"已添加事件: 第{chapter}章「{name}」",
+        data={"event_id": event_id, "timepoint_id": tp_id},
+    )
+
+
+def design_set_seed(
+    context: Any,
+    core: str,
+    conflict: str = "",
+    theme: str = "",
+    tone: str = "",
+) -> ToolResult:
+    """
+    设置故事核心种子
+
+    Args:
+        context: AgentContext
+        core: 故事核心（一句话概括）
+        conflict: 核心冲突
+        theme: 主题内核
+        tone: 情感基调
+    """
+    seed_data = {
+        "core": core,
+        "conflict": conflict,
+        "theme": theme,
+        "tone": tone,
+    }
+    context.extra["seed"] = seed_data
+
+    return ToolResult(
+        success=True,
+        content=f"已设置故事核心: {core[:50]}...",
+        data=seed_data,
+    )
+
+
+def design_add_chapter(
+    context: Any,
+    chapter_num: int,
+    title: str,
+    summary: str = "",
+    pov: str = "",
+    key_events: str = "",
+) -> ToolResult:
+    """
+    添加章节大纲
+
+    Args:
+        context: AgentContext
+        chapter_num: 章节号
+        title: 章节标题
+        summary: 章节摘要
+        pov: 视角角色
+        key_events: 关键事件（逗号分隔）
+    """
+    if isinstance(chapter_num, str):
+        chapter_num = int(chapter_num) if chapter_num.isdigit() else 1
+
+    if "blueprint" not in context.extra:
+        context.extra["blueprint"] = {}
+
+    context.extra["blueprint"][chapter_num] = {
+        "title": title,
+        "summary": summary,
+        "pov": pov,
+        "key_events": key_events,
+    }
+
+    return ToolResult(
+        success=True,
+        content=f"已添加第{chapter_num}章: 「{title}」",
+        data={"chapter_num": chapter_num, "title": title},
+    )
+
+
+def design_set_world(
+    context: Any,
+    setting: str,
+    rules: str = "",
+    factions: str = "",
+    technology: str = "",
+) -> ToolResult:
+    """
+    设置世界观设定
+
+    Args:
+        context: AgentContext
+        setting: 时代背景/世界类型
+        rules: 世界规则（魔法体系/科技水平等）
+        factions: 势力分布
+        technology: 技术水平/特殊能力体系
+    """
+    world_data = {
+        "setting": setting,
+        "rules": rules,
+        "factions": factions,
+        "technology": technology,
+    }
+    context.extra["world"] = world_data
+
+    return ToolResult(
+        success=True,
+        content=f"已设置世界观: {setting}",
+        data=world_data,
+    )
+
+
+def design_complete(context: Any, summary: str = "") -> ToolResult:
+    """
+    完成设计，提交最终设计摘要
+
+    Args:
+        context: AgentContext
+        summary: 设计摘要（可选，将自动生成）
+    """
+    # 收集所有设计数据
+    seed = context.extra.get("seed", {})
+    world = context.extra.get("world", {})
+    blueprint = context.extra.get("blueprint", {})
+
+    # 生成设计摘要
+    if not summary:
+        lines = ["═══════════════════════════════════════"]
+        lines.append("【小说设计蓝图】")
+        lines.append("═══════════════════════════════════════")
+
+        if seed:
+            lines.append("\n【核心种子】")
+            lines.append(f"├── 故事核心: {seed.get('core', '未设置')}")
+            if seed.get("conflict"):
+                lines.append(f"├── 核心冲突: {seed['conflict']}")
+            if seed.get("theme"):
+                lines.append(f"├── 主题内核: {seed['theme']}")
+            if seed.get("tone"):
+                lines.append(f"└── 情感基调: {seed['tone']}")
+
+        if world:
+            lines.append("\n【世界观设定】")
+            lines.append(f"├── 背景: {world.get('setting', '未设置')}")
+            if world.get("rules"):
+                lines.append(f"├── 规则: {world['rules']}")
+            if world.get("factions"):
+                lines.append(f"└── 势力: {world['factions']}")
+
+        if context.characters:
+            lines.append("\n【角色设定】")
+            for _char_id, char in context.characters.items():
+                role = char.attrs.get("role", "未知")
+                lines.append(f"├── {char.name}（{role}）")
+
+        if blueprint:
+            lines.append("\n【章节蓝图】")
+            for ch_num in sorted(blueprint.keys()):
+                ch = blueprint[ch_num]
+                lines.append(f"├── 第{ch_num}章「{ch.get('title', '未命名')}」")
+
+        lines.append("\n═══════════════════════════════════════")
+        summary = "\n".join(lines)
+
+    return ToolResult(
+        success=True,
+        content="设计已完成",
+        data={"final_content": summary, "completed": True},
+    )
+
+
+def get_design_tools() -> dict[str, Tool]:
+    """获取设计相关工具"""
+    return {
+        "add_character": Tool(
+            name="add_character",
+            description="添加角色到小说设定中",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "name": "角色名称（必填）",
+                "role": "角色定位：主角/反派/配角/龙套（默认配角）",
+                "description": "角色简介",
+                "personality": "性格特点",
+                "background": "背景故事",
+            },
+            execute=design_add_character,
+        ),
+        "add_location": Tool(
+            name="add_location",
+            description="添加地点到世界地图",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "name": "地点名称（必填）",
+                "loc_type": "地点类型：城市/建筑/自然/室内/其他（默认其他）",
+                "description": "地点描述",
+                "significance": "剧情意义",
+            },
+            execute=design_add_location,
+        ),
+        "add_event": Tool(
+            name="add_event",
+            description="添加事件到时间轴",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "name": "事件名称（必填）",
+                "chapter": "所在章节号（必填）",
+                "description": "事件描述",
+                "characters": "涉及角色（逗号分隔）",
+                "location": "发生地点",
+            },
+            execute=design_add_event,
+        ),
+        "set_seed": Tool(
+            name="set_seed",
+            description="设置故事核心种子",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "core": "故事核心，一句话概括（必填）",
+                "conflict": "核心冲突",
+                "theme": "主题内核",
+                "tone": "情感基调",
+            },
+            execute=design_set_seed,
+        ),
+        "add_chapter": Tool(
+            name="add_chapter",
+            description="添加章节大纲",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "chapter_num": "章节号（必填）",
+                "title": "章节标题（必填）",
+                "summary": "章节摘要",
+                "pov": "视角角色",
+                "key_events": "关键事件（逗号分隔）",
+            },
+            execute=design_add_chapter,
+        ),
+        "set_world": Tool(
+            name="set_world",
+            description="设置世界观设定",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "setting": "时代背景/世界类型（必填）",
+                "rules": "世界规则（魔法体系/科技水平等）",
+                "factions": "势力分布",
+                "technology": "技术水平/特殊能力体系",
+            },
+            execute=design_set_world,
+        ),
+        "complete_design": Tool(
+            name="complete_design",
+            description="完成设计并提交最终结果。设计完成后必须调用此工具！",
+            tool_type=ToolType.QUERY,
+            parameters={"summary": "设计摘要（可选，将自动生成）"},
+            execute=design_complete,
+        ),
+    }
+
+
 # =============== 工具注册 ===============
 
 
-def get_all_tools() -> dict[str, Tool]:
-    """获取所有可用工具"""
+def get_all_tools(mode: str = "write") -> dict[str, Tool]:
+    """
+    获取可用工具
+
+    Args:
+        mode: 工具模式
+            - "write": 写作工具（默认）
+            - "design": 设计工具
+    """
+    if mode == "design":
+        return get_design_tools()
     return {
         # 完成工具（必须首先调用以结束任务）
         "complete": Tool(

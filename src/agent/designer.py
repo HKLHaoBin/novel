@@ -8,12 +8,15 @@
 5. 章节蓝图 - 目录与大纲
 """
 
+from src.llm.provider import ToolCallLoop
+
 from .base import AgentContext, AgentResult, BaseAgent
 from .prompt_loader import prompt_library
+from .tools import get_all_tools
 
 
 class Designer(BaseAgent):
-    """设计师 Agent"""
+    """设计师 Agent - 使用工具调用构建设计"""
 
     name = "Designer"
     description = "专业小说架构师，精通雪花写作法、角色弧光理论和三幕式情节设计"
@@ -32,58 +35,61 @@ class Designer(BaseAgent):
         self.name = self._metadata.get("name", "Designer")
         self.description = self._metadata.get("description", "")
 
+    def _get_design_system_prompt(self, context: AgentContext) -> str:
+        """获取设计系统提示词"""
+        total_chapters = context.extra.get("total_chapters", 20)
+        word_count = context.extra.get("word_count_per_chapter", 3000)
+
+        return f"""你是专业小说架构师，负责使用工具构建设计蓝图。
+
+【任务目标】
+根据用户需求，调用工具构建设计：
+1. set_seed - 设置故事核心种子
+2. add_character - 添加角色（主角、配角、反派等）
+3. add_location - 添加地点到世界地图
+4. set_world - 设置世界观设定
+5. add_event - 添加关键事件到时间轴
+6. add_chapter - 添加章节大纲
+7. complete_design - 完成设计并提交
+
+【约束条件】
+- 总章节：约{total_chapters}章
+- 每章字数：约{word_count}字
+- 必须严格遵循用户需求中的设定
+- 设计完成后必须调用 complete_design 提交
+
+【设计流程】
+1. 先调用 set_seed 设置故事核心
+2. 调用 add_character 添加主要角色（至少主角和反派）
+3. 调用 add_location 添加关键地点
+4. 调用 set_world 设置世界观（如有特殊设定）
+5. 调用 add_event 添加关键情节事件
+6. 调用 add_chapter 为每章添加大纲
+7. 最后调用 complete_design 完成设计
+
+重要：所有设计数据通过工具调用自动结构化存储，无需输出文本格式。"""
+
     async def execute(self, context: AgentContext) -> AgentResult:
         """
-        执行设计任务
+        执行设计任务（工具调用模式）
 
         Args:
             context: 执行上下文，需要包含:
                 - user_input: 用户需求描述
-                - extra.get("phase"): 当前阶段
-                  (seed/character/world/plot/blueprint/full)
+                - extra.get("total_chapters"): 总章节数
+                - extra.get("word_count_per_chapter"): 每章字数
 
         Returns:
             设计结果
         """
         self._context = context
 
-        phase = context.extra.get("phase", "full")
         user_input = context.user_input
-
         if not user_input:
             return AgentResult(
                 success=False,
                 error="缺少用户需求描述",
             )
-
-        try:
-            if phase == "full":
-                return await self._full_design(context)
-            elif phase == "seed":
-                return await self._design_seed(context, user_input)
-            elif phase == "character":
-                return await self._design_characters(context)
-            elif phase == "world":
-                return await self._design_world(context)
-            elif phase == "plot":
-                return await self._design_plot(context)
-            elif phase == "blueprint":
-                return await self._design_blueprint(context)
-            else:
-                return AgentResult(
-                    success=False,
-                    error=f"未知的设计阶段: {phase}",
-                )
-        except Exception as e:
-            return AgentResult(
-                success=False,
-                error=f"设计过程出错: {e!s}",
-            )
-
-    async def _full_design(self, context: AgentContext) -> AgentResult:
-        """完整设计流程"""
-        results: list[AgentResult] = []
-        accumulated_content = ""  # 累积的设计内容
 
         # 检查是否是扩展设计任务
         user_guidance = context.extra.get("user_guidance", "")
@@ -91,47 +97,145 @@ class Designer(BaseAgent):
         is_expand_task = "扩展任务" in user_guidance and existing_design
 
         if is_expand_task:
-            # 扩展模式：保留原有设计，扩展章节蓝图并更新数据结构
             return await self._expand_design(context, existing_design, user_guidance)
 
-        # 正常设计流程
-        # seed 阶段需要额外参数
-        seed_result = await self._design_seed(
-            context, context.user_input, accumulated_content
+        try:
+            # 使用工具调用模式进行设计
+            return await self._design_with_tools(context)
+        except Exception as e:
+            return AgentResult(
+                success=False,
+                error=f"设计过程出错: {e!s}",
+            )
+
+    async def _design_with_tools(self, context: AgentContext) -> AgentResult:
+        """使用工具调用模式构建设计"""
+        user_input = context.user_input
+        total_chapters = context.extra.get("total_chapters", 20)
+        word_count = context.extra.get("word_count_per_chapter", 3000)
+        user_guidance = context.extra.get("user_guidance", "")
+
+        # 获取设计工具
+        tools = get_all_tools(mode="design")
+
+        # 构建用户提示
+        user_prompt = f"""请根据以下需求设计小说：
+
+【用户需求】
+{user_input}
+
+【约束条件】
+- 总章节：{total_chapters}章
+- 每章字数：约{word_count}字"""
+
+        if user_guidance:
+            user_prompt += f"\n\n【用户额外要求】\n{user_guidance}"
+
+        user_prompt += """
+
+【设计要求】
+1. 调用 set_seed 设置故事核心（必填：core）
+2. 调用 add_character 添加角色（至少添加主角和反派）
+3. 调用 add_location 添加关键地点
+4. 如有特殊世界观，调用 set_world 设置
+5. 调用 add_event 添加关键情节事件
+6. 调用 add_chapter 为每章添加大纲
+7. 最后调用 complete_design 完成设计
+
+请开始设计！"""
+
+        # 创建工具调用循环
+        loop = ToolCallLoop(
+            tools=tools,  # type: ignore[arg-type]
+            context=context,
+            max_iterations=50,  # 设计可能需要更多迭代
         )
-        if not seed_result.success:
-            return seed_result
-        results.append(seed_result)
-        accumulated_content += f"\n\n【核心种子】\n{seed_result.content}"
 
-        # 后续阶段，传递累积的内容
-        from collections.abc import Callable, Coroutine
-        from typing import Any
+        # 执行工具调用
+        system_prompt = self._get_design_system_prompt(context)
+        final_content = await loop.run(
+            provider=self.llm,  # type: ignore[arg-type]
+            system_prompt=system_prompt,
+            user_prompt=user_prompt,
+        )
 
-        PhaseFunc = Callable[[AgentContext], Coroutine[Any, Any, AgentResult]]
-        phases: list[tuple[str, PhaseFunc]] = [
-            ("character", self._design_characters),
-            ("world", self._design_world),
-            ("plot", self._design_plot),
-            ("blueprint", self._design_blueprint),
-        ]
+        if not final_content:
+            # 尝试从 context.extra 中生成设计摘要
+            final_content = self._generate_summary_from_tools(context)
 
-        for phase_name, phase_func in phases:
-            # 将累积内容传入 context.extra
-            context.extra["accumulated_design"] = accumulated_content
-            result = await phase_func(context)
-            if not result.success:
-                return result
-            results.append(result)
-            accumulated_content += f"\n\n【{phase_name}】\n{result.content}"
+        # 收集图结构数据
+        nodes_to_add = []
+        timepoints_to_add = []
+
+        if context.graph:
+            for node in context.graph.nodes.values():
+                nodes_to_add.append(node)
+        if context.timeline:
+            for tp in context.timeline.points.values():
+                timepoints_to_add.append(tp)
 
         return AgentResult(
             success=True,
-            content=accumulated_content,
-            nodes_to_add=[n for r in results for n in r.nodes_to_add],
-            edges_to_add=[e for r in results for e in r.edges_to_add],
-            timepoints_to_add=[t for r in results for t in r.timepoints_to_add],
+            content=final_content,
+            nodes_to_add=nodes_to_add,
+            timepoints_to_add=timepoints_to_add,
         )
+
+    def _generate_summary_from_tools(self, context: AgentContext) -> str:
+        """从工具调用结果生成设计摘要"""
+        lines = ["═══════════════════════════════════════"]
+        lines.append("【小说设计蓝图】")
+        lines.append("═══════════════════════════════════════")
+
+        # 核心种子
+        seed = context.extra.get("seed", {})
+        if seed:
+            lines.append("\n【核心种子】")
+            lines.append(f"├── 故事核心: {seed.get('core', '未设置')}")
+            if seed.get("conflict"):
+                lines.append(f"├── 核心冲突: {seed['conflict']}")
+            if seed.get("theme"):
+                lines.append(f"├── 主题内核: {seed['theme']}")
+            if seed.get("tone"):
+                lines.append(f"└── 情感基调: {seed['tone']}")
+
+        # 世界观
+        world = context.extra.get("world", {})
+        if world:
+            lines.append("\n【世界观设定】")
+            lines.append(f"├── 背景: {world.get('setting', '未设置')}")
+            if world.get("rules"):
+                lines.append(f"├── 规则: {world['rules']}")
+            if world.get("factions"):
+                lines.append(f"└── 势力: {world['factions']}")
+
+        # 角色
+        if context.characters:
+            lines.append("\n【角色设定】")
+            for _char_id, char in context.characters.items():
+                role = char.attrs.get("role", "未知")
+                desc = char.attrs.get("description", "")
+                line = f"├── {char.name}（{role}）"
+                if desc:
+                    line += f" - {desc[:30]}..."
+                lines.append(line)
+
+        # 地点
+        if context.world_map and context.world_map.locations:
+            lines.append("\n【世界地图】")
+            for _loc_id, loc in context.world_map.locations.items():
+                lines.append(f"├── {loc.name}（{loc.type.value}）")
+
+        # 章节蓝图
+        blueprint = context.extra.get("blueprint", {})
+        if blueprint:
+            lines.append("\n【章节蓝图】")
+            for ch_num in sorted(blueprint.keys()):
+                ch = blueprint[ch_num]
+                lines.append(f"├── 第{ch_num}章「{ch.get('title', '未命名')}」")
+
+        lines.append("\n═══════════════════════════════════════")
+        return "\n".join(lines)
 
     async def _expand_design(
         self, context: AgentContext, existing_design: str, user_guidance: str
