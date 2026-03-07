@@ -9,6 +9,22 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from rich.console import Console
+from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    Progress,
+    SpinnerColumn,
+    TaskProgressColumn,
+    TextColumn,
+    TimeElapsedColumn,
+)
+from rich.table import Table
+from rich.text import Text
+
+# Rich Console
+console = Console()
+
 # 默认配置路径
 DEFAULT_CONFIG_PATH = Path.home() / ".novel" / "config.json"
 
@@ -55,27 +71,30 @@ async def cmd_config(args: argparse.Namespace) -> int:
 
     if args.base_url:
         config["base_url"] = args.base_url
-        print(f"已设置 Base URL: {args.base_url}")
+        console.print(f"[green]✓[/green] 已设置 Base URL: [cyan]{args.base_url}[/cyan]")
 
     if args.model:
         config["model"] = args.model
-        print(f"已设置模型: {args.model}")
+        console.print(f"[green]✓[/green] 已设置模型: [cyan]{args.model}[/cyan]")
 
     if args.llm_type:
         config["llm_type"] = args.llm_type
-        print(f"已设置 LLM 类型: {args.llm_type}")
+        console.print(f"[green]✓[/green] 已设置 LLM 类型: [cyan]{args.llm_type}[/cyan]")
 
     if config:
         save_config(config)
-        print(f"配置已保存到: {DEFAULT_CONFIG_PATH}")
+        console.print(f"\n[dim]配置已保存到: {DEFAULT_CONFIG_PATH}[/dim]")
     else:
         # 显示当前配置
-        print("当前配置:")
+        table = Table(title="当前配置", show_header=False)
+        table.add_column("Key", style="cyan")
+        table.add_column("Value", style="white")
         for key, value in config.items():
             if key == "api_key" and value:
-                print(f"  {key}: {value[:8]}...")
+                table.add_row(key, f"{value[:8]}...")
             else:
-                print(f"  {key}: {value}")
+                table.add_row(key, str(value) if value else "[dim]未设置[/dim]")
+        console.print(table)
 
     return 0
 
@@ -87,7 +106,10 @@ async def cmd_create(args: argparse.Namespace) -> int:
     llm_config = get_llm_config()
 
     if not llm_config.get("api_key"):
-        print("错误: 未配置 API Key，请先运行 'novel config --api-key YOUR_KEY'")
+        console.print(
+            "[red]错误:[/red] 未配置 API Key，"
+            "请先运行 'novel config --api-key YOUR_KEY'"
+        )
         return 1
 
     generator = NovelGenerator(
@@ -98,57 +120,72 @@ async def cmd_create(args: argparse.Namespace) -> int:
 
     def on_progress(stage: str, message: str):
         if args.verbose:
-            print(f"[{stage}] {message}")
+            console.print(f"[dim]  {message}[/dim]")
 
     generator.on_progress(on_progress)
 
     try:
-        novel_ctx = await generator.create_novel(
-            title=args.title,
-            user_prompt=args.prompt,
-            total_chapters=args.chapters,
-            word_count_per_chapter=args.words,
+        with console.status("[bold blue]正在创建小说...[/bold blue]"):
+            novel_ctx = await generator.create_novel(
+                title=args.title,
+                user_prompt=args.prompt,
+                total_chapters=args.chapters,
+                word_count_per_chapter=args.words,
+            )
+
+        console.print(
+            Panel(
+                f"[bold]{novel_ctx.snapshot.title}[/bold]\n\n"
+                f"[dim]ID:[/dim] {novel_ctx.snapshot.id}\n"
+                f"[dim]章节:[/dim] {args.chapters} 章\n"
+                f"[dim]每章:[/dim] {args.words} 字",
+                title="✨ 小说已创建",
+                border_style="green",
+            )
         )
 
-        print(f"\n已创建小说: {novel_ctx.snapshot.title}")
-        print(f"ID: {novel_ctx.snapshot.id}")
-        print(f"章节数: {args.chapters}")
-        print(f"每章字数: {args.words}")
-
         if args.design:
-            print("\n开始架构设计...")
-            result = await generator.design()
+            with console.status("[bold blue]🎨 正在进行架构设计...[/bold blue]"):
+                result = await generator.design()
 
             if result.success:
                 if args.interactive:
-                    # 交互模式：显示设计结果并等待用户确认
-                    print("\n" + "=" * 60)
-                    print("设计结果预览:")
-                    print("=" * 60)
-                    print(result.content)
-                    print("=" * 60)
+                    console.print(
+                        Panel(
+                            result.content,
+                            title="📋 设计结果",
+                            border_style="blue",
+                        )
+                    )
 
                     while True:
                         user_input = (
-                            input("\n选项: [确认/修改/重做/取消]: ").strip().lower()
+                            console.input(
+                                "\n[bold]选项:[/bold] [确认/修改/重做/取消] "
+                            )
+                            .strip()
+                            .lower()
                         )
 
                         if user_input in ["确认", "y", "yes", "ok"]:
-                            print("设计已确认!")
+                            console.print("[green]✓ 设计已确认![/green]")
                             break
                         elif user_input in ["修改", "m", "modify"]:
-                            print("\n请输入修改建议（输入空行结束）:")
+                            console.print(
+                                "\n[dim]请输入修改建议（输入空行结束）:[/dim]"
+                            )
                             lines = []
                             while True:
-                                line = input()
+                                line = console.input()
                                 if not line:
                                     break
                                 lines.append(line)
 
                             if lines:
                                 feedback = "\n".join(lines)
-                                print("\n正在根据修改建议调整设计...")
-                                # 更新 user_guidance 加入修改意见
+                                console.print(
+                                    "\n[yellow]正在根据修改建议调整设计...[/yellow]"
+                                )
                                 novel_ctx.snapshot.user_guidance = (
                                     f"{novel_ctx.snapshot.user_guidance}\n"
                                     f"修改意见: {feedback}"
@@ -156,41 +193,62 @@ async def cmd_create(args: argparse.Namespace) -> int:
                                 generator.coordinator.state_manager.save_draft(
                                     novel_ctx.snapshot
                                 )
-                                result = await generator.design()
+                                with console.status(
+                                    "[bold blue]重新设计中...[/bold blue]"
+                                ):
+                                    result = await generator.design()
                                 if result.success:
-                                    print("\n调整后的设计:")
-                                    print(result.content)
+                                    console.print(
+                                        Panel(
+                                            result.content,
+                                            title="📋 调整后的设计",
+                                        )
+                                    )
                                 else:
-                                    print(f"调整失败: {result.error}")
+                                    console.print(
+                                        f"[red]调整失败: {result.error}[/red]"
+                                    )
                         elif user_input in ["重做", "r", "redo"]:
-                            print("\n正在重新设计...")
-                            # 清除旧的设计，确保从头开始
+                            console.print("\n[yellow]正在重新设计...[/yellow]")
                             novel_ctx.snapshot.global_summary = ""
                             generator.coordinator.state_manager.save_draft(
                                 novel_ctx.snapshot
                             )
-                            result = await generator.design()
+                            with console.status(
+                                "[bold blue]重新设计中...[/bold blue]"
+                            ):
+                                result = await generator.design()
                             if result.success:
-                                print("\n新的设计结果:")
-                                print(result.content)
+                                console.print(
+                                    Panel(
+                                        result.content,
+                                        title="📋 新的设计结果",
+                                    )
+                                )
                             else:
-                                print(f"重做失败: {result.error}")
+                                console.print(
+                                    f"[red]重做失败: {result.error}[/red]"
+                                )
                         elif user_input in ["取消", "c", "cancel", "q"]:
-                            print("已取消设计")
+                            console.print("[yellow]已取消设计[/yellow]")
                             return 1
                 else:
-                    print("设计完成!")
+                    console.print("[green]✓ 设计完成![/green]")
                     if args.verbose:
-                        print(result.content[:500] + "...")
+                        console.print(
+                            Panel(
+                                result.content[:500] + "...",
+                                title="设计摘要",
+                            )
+                        )
             else:
-                print(f"设计失败: {result.error}")
+                console.print(f"[red]设计失败: {result.error}[/red]")
                 return 1
 
-        # 保存检查点
         generator.save_checkpoint()
 
     except Exception as e:
-        print(f"错误: {e}")
+        console.print(f"[red]错误: {e}[/red]")
         return 1
     finally:
         await generator.close()
@@ -206,10 +264,9 @@ async def cmd_design(args: argparse.Namespace) -> int:
     llm_config = get_llm_config()
 
     if not llm_config.get("api_key"):
-        print("错误: 未配置 API Key")
+        console.print("[red]错误: 未配置 API Key[/red]")
         return 1
 
-    # 初始化人在回路管理器
     edit_mode = EditMode(getattr(args, "edit_mode", "auto"))
     auto_confirm = getattr(args, "auto_confirm", False)
     human_loop = HumanLoopManager(
@@ -223,37 +280,34 @@ async def cmd_design(args: argparse.Namespace) -> int:
     )
 
     try:
-        # 加载小说
         novel_ctx = await generator.load_novel(args.title)
 
         if not novel_ctx:
-            print(f"错误: 未找到小说 '{args.title}'")
+            console.print(f"[red]错误: 未找到小说 '{args.title}'[/red]")
             return 1
 
-        # 强制重新设计（清除旧设计）
         if args.force:
             novel_ctx.snapshot.global_summary = ""
             novel_ctx.global_summary = ""
-            print("已清除旧的设计，将重新设计...")
+            console.print("[yellow]已清除旧的设计，将重新设计...[/yellow]")
 
-        # 更新章节数（如果指定）
         old_chapters = novel_ctx.snapshot.progress.total_chapters
         need_expand = False
         if args.chapters and args.chapters != old_chapters:
             novel_ctx.snapshot.progress.total_chapters = args.chapters
             generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
-            print(f"目标章节数已更新: {old_chapters} → {args.chapters}")
-            # 标记需要扩展设计
+            console.print(f"[cyan]目标章节数: {old_chapters} → {args.chapters}[/cyan]")
             if novel_ctx.global_summary:
                 need_expand = True
-                print("将在现有设计基础上扩展章节规划...")
+                console.print("[cyan]将在现有设计基础上扩展章节规划...[/cyan]")
 
-        # 检查是否已有设计
         if novel_ctx.global_summary and not args.force and not need_expand:
-            print(f"《{args.title}》已有设计，使用 'design --force' 强制重新设计")
+            console.print(
+                f"[yellow]《{args.title}》已有设计，使用 "
+                f"[bold]design --force[/bold] 强制重新设计[/yellow]"
+            )
             return 0
 
-        # 标记是否为扩展设计
         if need_expand:
             novel_ctx.snapshot.user_guidance = (
                 f"{novel_ctx.snapshot.user_guidance}\n"
@@ -262,45 +316,52 @@ async def cmd_design(args: argparse.Namespace) -> int:
             )
             generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
 
-        print(f"正在为《{args.title}》进行架构设计...")
-
-        result = await generator.design()
+        with console.status(
+            f"[bold blue]🎨 正在为《{args.title}》进行架构设计...[/bold blue]"
+        ):
+            result = await generator.design()
 
         if result.success:
-            # 使用人在回路确认设计
-            interaction = human_loop.confirm(
-                content=result.content,
-                title="设计结果",
-                allow_edit=True,
+            console.print(
+                Panel(
+                    result.content,
+                    title="📋 设计结果",
+                    border_style="blue",
+                )
             )
 
-            if not interaction.confirmed:
-                print("已取消设计")
-                return 1
+            if args.interactive:
+                interaction = human_loop.confirm(
+                    content=result.content,
+                    title="设计结果",
+                    allow_edit=True,
+                )
 
-            # 如果用户修改了内容，更新设计
-            if interaction.modified:
-                result.content = interaction.content
-                # 更新到 snapshot
-                novel_ctx.snapshot.global_summary = interaction.content
-                generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
-                print("设计已更新!")
+                if not interaction.confirmed:
+                    console.print("[yellow]已取消设计[/yellow]")
+                    return 1
+
+                if interaction.modified:
+                    result.content = interaction.content
+                    novel_ctx.snapshot.global_summary = interaction.content
+                    generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
+                    console.print("[green]✓ 设计已更新![/green]")
 
             if args.output:
                 with open(args.output, "w", encoding="utf-8") as f:
                     f.write(result.content)
-                print(f"设计结果已保存到: {args.output}")
+                console.print(f"[dim]设计结果已保存到: {args.output}[/dim]")
             else:
-                print("\n设计完成!\n")
+                console.print("\n[green]✓ 设计完成![/green]\n")
 
         else:
-            print(f"设计失败: {result.error}")
+            console.print(f"[red]设计失败: {result.error}[/red]")
             return 1
 
         generator.save_checkpoint()
 
     except Exception as e:
-        print(f"错误: {e}")
+        console.print(f"[red]错误: {e}[/red]")
         return 1
     finally:
         await generator.close()
@@ -310,134 +371,119 @@ async def cmd_design(args: argparse.Namespace) -> int:
 
 async def cmd_write(args: argparse.Namespace) -> int:
     """撰写章节"""
-    from src.agent import EditMode, HumanLoopManager
     from src.generator import NovelGenerator
 
     llm_config = get_llm_config()
 
     if not llm_config.get("api_key"):
-        print("错误: 未配置 API Key")
+        console.print("[red]错误: 未配置 API Key[/red]")
         return 1
-
-    # 初始化人在回路管理器
-    edit_mode = EditMode(getattr(args, "edit_mode", "auto"))
-    auto_confirm = getattr(args, "auto_confirm", False)
-    human_loop = HumanLoopManager(
-        edit_mode=edit_mode,
-        auto_confirm=auto_confirm or not getattr(args, "interactive", False),
-    )
 
     generator = NovelGenerator(
         llm_config=llm_config,
         save_dir=args.save_dir or "./novels",
     )
 
-    # 进度回调 - 使用更美观的样式
     def on_progress(stage: str, message: str):
-        stage_icons = {
-            "created": "✨",
-            "designing": "🎨",
-            "designed": "✅",
-            "writing": "✍️",
-            "auditing": "🔍",
-            "polishing": "✨",
-            "chapter_complete": "📖",
-            "error": "❌",
-        }
-        icon = stage_icons.get(stage, "▶")
         if args.verbose:
-            print(f"  {icon} {message}")
+            console.print(f"[dim]  {message}[/dim]")
 
     generator.on_progress(on_progress)
 
     try:
-        # 加载小说
         novel_ctx = await generator.load_novel(args.title)
 
         if not novel_ctx:
-            print(f"❌ 未找到小说 '{args.title}'")
+            console.print(f"[red]❌ 未找到小说 '{args.title}'[/red]")
             return 1
 
         total = novel_ctx.snapshot.progress.total_chapters
 
         if args.all:
-            # 写全部章节
             start = novel_ctx.snapshot.progress.current_chapter + 1
             if start > total:
-                print("✅ 所有章节已完成!")
+                console.print("[green]✅ 所有章节已完成![/green]")
                 return 0
 
-            print(f"\n📝 开始撰写第 {start} 到 {total} 章...\n")
-
-            results = await generator.write_all_chapters(
-                start=start,
-                auto_audit=not args.no_audit,
-                auto_polish=not args.no_polish,
+            console.print(
+                Panel(
+                    f"[bold]撰写第 {start} 到 {total} 章[/bold]",
+                    title="📝 批量写作",
+                    border_style="blue",
+                )
             )
 
-            for result in results:
-                if result.success:
-                    # 章节预览
-                    interaction = human_loop.chapter_preview(
-                        chapter_num=result.chapter_num,
-                        title=result.chapter_title or "",
-                        content=result.content or "",
-                    )
+            with Progress(
+                SpinnerColumn(),
+                TextColumn("[progress.description]{task.description}"),
+                BarColumn(),
+                TaskProgressColumn(),
+                TimeElapsedColumn(),
+                console=console,
+            ) as progress:
+                task = progress.add_task(
+                    "[cyan]写作进度", total=total - start + 1
+                )
 
-                    if not interaction.confirmed:
-                        if interaction.feedback:
-                            print(f"  🔄 重写要求: {interaction.feedback}")
-                        print("  ⏭️ 已放弃此章节")
+                results = await generator.write_all_chapters(
+                    start=start,
+                    auto_audit=not args.no_audit,
+                    auto_polish=not args.no_polish,
+                )
+
+                for result in results:
+                    if result.success:
+                        progress.advance(task)
+                        title_display = result.chapter_title or "无题"
+                        content_len = len(result.content) if result.content else 0
+                        console.print(
+                            f"  [green]✓[/green] 第 {result.chapter_num} 章 "
+                            f"「[bold]{title_display}[/bold]」({content_len} 字)"
+                        )
+                    else:
+                        error_msg = (
+                            f"  [red]✗[/red] 第 {result.chapter_num} 章"
+                            f"失败: {result.error}"
+                        )
+                        console.print(error_msg)
                         return 1
 
-                    if interaction.modified:
-                        result.content = interaction.content
-
-                    content_len = len(result.content) if result.content else 0
-                    title_display = result.chapter_title or "无题"
-                    print(
-                        f"\n  ✅ 第 {result.chapter_num} 章"
-                        f"「{title_display}」({content_len} 字)"
-                    )
-                else:
-                    print(f"\n  ❌ 第 {result.chapter_num} 章失败: {result.error}")
-                    return 1
+            console.print("\n[green]✅ 批量写作完成![/green]")
         else:
-            # 写单章
             chapter_num = args.chapter
 
             if chapter_num > total:
-                print(f"❌ 章节号 {chapter_num} 超出范围 (总共 {total} 章)")
+                console.print(
+                    f"[red]❌ 章节号 {chapter_num} 超出范围 (总共 {total} 章)[/red]"
+                )
                 return 1
 
-            result = await generator.write_chapter(
-                chapter_num=chapter_num,
-                auto_audit=not args.no_audit,
-                auto_polish=not args.no_polish,
-            )
-
-            if result.success:
-                # 章节预览
-                interaction = human_loop.chapter_preview(
+            with console.status(
+                f"[bold blue]✍️ 正在撰写第 {chapter_num} 章...[/bold blue]"
+            ):
+                result = await generator.write_chapter(
                     chapter_num=chapter_num,
-                    title=result.chapter_title or "",
-                    content=result.content or "",
+                    auto_audit=not args.no_audit,
+                    auto_polish=not args.no_polish,
                 )
 
-                if not interaction.confirmed:
-                    if interaction.feedback:
-                        print(f"  🔄 重写要求: {interaction.feedback}")
-                    print("  ⏭️ 已放弃此章节")
-                    return 1
-
-                if interaction.modified:
-                    result.content = interaction.content
-
-                content_len = len(result.content) if result.content else 0
+            if result.success:
                 title_display = result.chapter_title or "无题"
-                print(
-                    f"\n  ✅ 第 {chapter_num} 章"
-                    f"「{title_display}」({content_len} 字)"
+                content_len = len(result.content) if result.content else 0
+
+                console.print(
+                    Panel(
+                        (
+                            result.content[:1000] + "..."
+                            if len(result.content) > 1000
+                            else result.content
+                        ),
+                        title=(
+                            f"📖 第 {chapter_num} 章 "
+                            f"「{title_display}」({content_len} 字)"
+                        ),
+                        border_style="green",
+                    )
                 )
 
                 if args.output:
@@ -466,33 +512,63 @@ async def cmd_list(args: argparse.Namespace) -> int:
     state_manager = NovelStateManager(args.save_dir or "./novels")
 
     if args.title:
-        # 列出章节
         chapters = state_manager.list_chapters(args.title)
 
         if not chapters:
-            print(f"📚 小说《{args.title}》暂无完成章节")
+            console.print(f"[yellow]📚 小说《{args.title}》暂无完成章节[/yellow]")
             return 0
 
-        print(f"\n📚 《{args.title}》已完成章节:\n")
+        table = Table(
+            title=f"📚 《{args.title}》已完成章节",
+            show_header=True,
+            header_style="bold cyan",
+            border_style="blue",
+        )
+        table.add_column("章节", style="dim", width=8)
+        table.add_column("标题", style="bold")
+        table.add_column("字数", justify="right", style="green")
+
         for ch in chapters:
             title = ch.get("title", "无题")
-            print(f"  📖 第 {ch['chapter_num']} 章: {title} ({ch['word_count']} 字)")
-        print()
+            table.add_row(
+                f"第 {ch['chapter_num']} 章",
+                title,
+                f"{ch['word_count']} 字",
+            )
+
+        console.print(table)
+
     else:
-        # 列出小说
         novels = state_manager.list_novels()
 
         if not novels:
-            print("📚 暂无小说")
+            console.print("[yellow]📚 暂无小说[/yellow]")
             return 0
 
-        print("\n📚 已创建的小说:\n")
+        table = Table(
+            title="📚 已创建的小说",
+            show_header=True,
+            header_style="bold cyan",
+            border_style="blue",
+        )
+        table.add_column("书名", style="bold magenta")
+        table.add_column("章节数", justify="right")
+        table.add_column("总字数", justify="right", style="green")
+        table.add_column("状态", style="yellow")
+
         for novel in novels:
-            print(
-                f"  📖 《{novel['title']}》 - {novel['chapter_count']} 章 "
-                f"({novel['total_words']} 字)"
+            is_complete = (
+                novel["chapter_count"] >= novel.get("total", 0)
             )
-        print()
+            status = "✅ 完成" if is_complete else "📝 写作中"
+            table.add_row(
+                novel["title"],
+                str(novel["chapter_count"]),
+                f"{novel['total_words']} 字",
+                status,
+            )
+
+        console.print(table)
 
     return 0
 
@@ -506,32 +582,44 @@ async def cmd_status(args: argparse.Namespace) -> int:
     snapshot = state_manager.load_latest_draft(args.title)
 
     if not snapshot:
-        print(f"未找到小说: {args.title}")
+        console.print(f"[red]❌ 未找到小说: {args.title}[/red]")
         return 1
 
-    # 基础信息
-    print(f"\n{'═' * 50}")
-    print(f"  《{snapshot.title}》")
-    print(f"{'═' * 50}")
-    print(f"  ID: {snapshot.id}")
-    print(f"  创建: {snapshot.created_at[:10] if snapshot.created_at else '未知'}")
-    print(f"  更新: {snapshot.updated_at[:10] if snapshot.updated_at else '未知'}")
-    print(f"  阶段: {snapshot.progress.current_phase.value}")
-    print(
-        f"  进度: {snapshot.progress.current_chapter}/"
-        f"{snapshot.progress.total_chapters} 章"
+    # 基础信息面板
+    info_text = Text()
+    info_text.append("ID: ", style="dim")
+    info_text.append(f"{snapshot.id}\n")
+    info_text.append("创建: ", style="dim")
+    info_text.append(f"{snapshot.created_at[:10] if snapshot.created_at else '未知'}\n")
+    info_text.append("更新: ", style="dim")
+    info_text.append(f"{snapshot.updated_at[:10] if snapshot.updated_at else '未知'}\n")
+    info_text.append("阶段: ", style="dim")
+    info_text.append(f"{snapshot.progress.current_phase.value}\n")
+    info_text.append("进度: ", style="dim")
+    info_text.append(
+        f"{snapshot.progress.current_chapter}/"
+        f"{snapshot.progress.total_chapters} 章\n"
     )
 
-    # 已完成章节
+    # 完成章节
     if snapshot.progress.completed_chapters:
         completed = sorted(snapshot.progress.completed_chapters)
-        print(f"  完成: {len(completed)} 章")
+        info_text.append("完成: ", style="dim")
+        info_text.append(f"{len(completed)} 章 ")
         if len(completed) <= 10:
-            print(f"        {', '.join(map(str, completed))}")
+            info_text.append(f"[{', '.join(map(str, completed))}]", style="green")
         else:
             first_five = ', '.join(map(str, completed[:5]))
             last_three = ', '.join(map(str, completed[-3:]))
-            print(f"        {first_five} ... {last_three}")
+            info_text.append(f"[{first_five} ... {last_three}]", style="green")
+
+    console.print(
+        Panel(
+            info_text,
+            title=f"[bold cyan]《{snapshot.title}》[/bold cyan]",
+            border_style="blue",
+        )
+    )
 
     # 设计蓝图
     if snapshot.global_summary:
@@ -558,40 +646,58 @@ async def cmd_status(args: argparse.Namespace) -> int:
                     if capture and line.strip():
                         key_lines.append(f"  {line}")
                 print("\n".join(key_lines[:20]))
-                print("\n  💡 使用 --full 查看完整设计")
+                console.print("\n[dim]💡 使用 --full 查看完整设计[/dim]")
             else:
                 for line in summary.split("\n")[:30]:
                     print(f"  {line}")
 
     # 时间轴摘要
     if snapshot.timeline_data and snapshot.timeline_data.get("points"):
-        print(f"\n{'─' * 50}")
-        print("  ⏱️ 时间轴")
-        print(f"{'─' * 50}")
         points = snapshot.timeline_data.get("points", {})
         point_count = len(points)
-        print(f"  已记录 {point_count} 个时间点")
+
+        timeline_table = Table(
+            title="⏱️ 时间轴",
+            show_header=False,
+            border_style="dim",
+            box=None,
+            padding=(0, 2),
+        )
+        timeline_table.add_column("info", style="dim")
+
+        timeline_table.add_row(f"已记录 {point_count} 个时间点")
+
         if point_count <= 5:
             for pid, p in list(points.items())[:5]:
-                print(f"  • {p.get('label', pid)}")
+                timeline_table.add_row(f"• {p.get('label', pid)}")
+
+        console.print(timeline_table)
 
     # 角色摘要
     if snapshot.characters_data:
-        print(f"\n{'─' * 50}")
-        print("  👥 角色")
-        print(f"{'─' * 50}")
         char_count = len(snapshot.characters_data)
-        print(f"  已设定 {char_count} 个角色")
+
+        char_table = Table(
+            title="👥 角色",
+            show_header=False,
+            border_style="dim",
+            box=None,
+            padding=(0, 2),
+        )
+        char_table.add_column("info")
+
+        char_table.add_row(f"已设定 {char_count} 个角色")
+
         if char_count <= 6:
             for cid, char in snapshot.characters_data.items():
                 name = char.get("name", cid)
                 role = char.get("attrs", {}).get("role", "")
                 if role:
-                    print(f"  • {name} ({role})")
+                    char_table.add_row(f"• [bold]{name}[/bold] ([dim]{role}[/dim])")
                 else:
-                    print(f"  • {name}")
+                    char_table.add_row(f"• [bold]{name}[/bold]")
 
-    print(f"\n{'═' * 50}\n")
+        console.print(char_table)
 
     return 0
 
@@ -605,7 +711,7 @@ async def cmd_export(args: argparse.Namespace) -> int:
     chapters = state_manager.list_chapters(args.title)
 
     if not chapters:
-        print(f"小说《{args.title}》暂无完成章节")
+        console.print(f"[yellow]小说《{args.title}》暂无完成章节[/yellow]")
         return 1
 
     # 按章节排序
@@ -613,19 +719,34 @@ async def cmd_export(args: argparse.Namespace) -> int:
 
     output_path = args.output or f"{args.title}.txt"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(f"{args.title}\n\n")
+    with Progress(
+        SpinnerColumn(),
+        TextColumn("[progress.description]{task.description}"),
+        console=console,
+    ) as progress:
+        task = progress.add_task("[cyan]导出中...", total=None)
 
-        for ch in chapters:
-            content = state_manager.load_chapter(args.title, ch["chapter_num"])
-            if content:
-                title = ch.get("title", f"第{ch['chapter_num']}章")
-                f.write(f"第{ch['chapter_num']}章 {title}\n\n")
-                f.write(content)
-                f.write("\n\n")
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(f"{args.title}\n\n")
 
-    print(f"已导出到: {output_path}")
-    print(f"共 {len(chapters)} 章")
+            for ch in chapters:
+                content = state_manager.load_chapter(args.title, ch["chapter_num"])
+                if content:
+                    title = ch.get("title", f"第{ch['chapter_num']}章")
+                    f.write(f"第{ch['chapter_num']}章 {title}\n\n")
+                    f.write(content)
+                    f.write("\n\n")
+
+        progress.update(task, description="[green]导出完成!")
+
+    console.print(
+        Panel(
+            f"[bold green]✓ 导出成功[/bold green]\n\n"
+            f"文件: [cyan]{output_path}[/cyan]\n"
+            f"章节: [bold]{len(chapters)}[/bold] 章",
+            border_style="green",
+        )
+    )
 
     return 0
 
