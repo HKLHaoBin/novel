@@ -171,15 +171,15 @@ class Designer(BaseAgent):
         )
 
         # 3. 合并原有设计和新的蓝图
-        final_content = existing_design.replace(
-            existing_design.split("【blueprint】")[-1]
-            if "【blueprint】" in existing_design
-            else "",
-            "",
-        )
-        final_content = (
-            final_content.strip() + f"\n\n【blueprint】\n{new_blueprint}"
-        )
+        if "【blueprint】" in existing_design:
+            # 保留 blueprint 之前的内容
+            parts = existing_design.split("【blueprint】")
+            final_content = parts[0].strip() + f"\n\n【blueprint】\n{new_blueprint}"
+        else:
+            # 没有找到 blueprint 标记，追加新的蓝图
+            final_content = (
+                existing_design.strip() + f"\n\n【blueprint】\n{new_blueprint}"
+            )
 
         return AgentResult(
             success=True,

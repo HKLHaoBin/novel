@@ -67,9 +67,25 @@ class NovelGenerator:
 
     def _get_knowledge_db_path(self, title: str) -> str:
         """获取小说专属的知识库路径"""
-        novel_dir = Path(self.save_dir) / title
+        safe_title = self._sanitize_title(title)
+        novel_dir = Path(self.save_dir) / safe_title
         novel_dir.mkdir(parents=True, exist_ok=True)
         return str(novel_dir / "knowledge.db")
+
+    def _sanitize_title(self, title: str) -> str:
+        """清理标题中的非法字符"""
+        import re
+
+        # 移除或替换文件系统不允许的字符
+        # Windows 不允许: < > : " / \ | ? *
+        # Unix 不允许: / 和空字符
+        safe_title = re.sub(r'[<>:"/\\|?*\x00-\x1f]', "_", title)
+        # 移除首尾空格和点（Windows不允许结尾是点或空格）
+        safe_title = safe_title.strip(". ")
+        # 如果清理后为空，使用默认名称
+        if not safe_title:
+            safe_title = "untitled"
+        return safe_title
 
     def on_progress(self, callback: Callable[[str, str], None]) -> None:
         """设置进度回调"""
@@ -142,6 +158,17 @@ class NovelGenerator:
             # 保存设计结果到 snapshot
             self.novel_ctx.snapshot.global_summary = result.content
 
+            # 将设计中的节点、边、时间点添加到图结构
+            if result.nodes_to_add:
+                for node in result.nodes_to_add:
+                    self.novel_ctx.graph.add_node(node)
+            if result.edges_to_add:
+                for edge in result.edges_to_add:
+                    self.novel_ctx.graph.add_edge(edge)
+            if result.timepoints_to_add:
+                for tp in result.timepoints_to_add:
+                    self.novel_ctx.timeline.append(tp)
+
             # 保存完整数据到 snapshot（包括 graph, timeline, world_map, characters）
             self.coordinator.save_novel(self.novel_ctx)
 
@@ -203,7 +230,11 @@ class NovelGenerator:
         agent_ctx = self._build_agent_context()
         agent_ctx.extra["chapter_num"] = chapter_num
         agent_ctx.extra["chapter_blueprint"] = blueprint
-        agent_ctx.extra["word_count"] = 3000  # TODO: 从配置读取
+        # 从用户配置中获取字数，默认3000
+        word_count = self._parse_word_count(
+            self.novel_ctx.snapshot.user_guidance
+        )
+        agent_ctx.extra["word_count"] = word_count
         agent_ctx.extra["completed_chapters"] = completed_chapters
         agent_ctx.extra["state_manager"] = self.coordinator.state_manager
         agent_ctx.extra["novel_title"] = self.novel_ctx.snapshot.title
@@ -262,10 +293,12 @@ class NovelGenerator:
 
         # 更新知识库
         if self.knowledge:
+            # 生成智能摘要
+            summary = self._generate_chapter_summary(content)
             await self.knowledge.add_chapter_summary(
                 chapter_num=chapter_num,
                 title=write_result.chapter_title,
-                summary=content[:500],  # TODO: 生成真正的摘要
+                summary=summary,
             )
 
         self._report_progress("chapter_complete", f"第{chapter_num}章完成")
@@ -378,6 +411,56 @@ class NovelGenerator:
         """报告进度"""
         if self._on_progress:
             self._on_progress(stage, message)
+
+    def _parse_word_count(self, user_guidance: str | None) -> int:
+        """从用户配置中解析每章字数"""
+        import re
+
+        if not user_guidance:
+            return 3000
+
+        # 尝试匹配 "每章约XXX字" 或 "每章XXX字"
+        match = re.search(r"每章(?:约)?(\d+)字", user_guidance)
+        if match:
+            return int(match.group(1))
+
+        return 3000
+
+    def _generate_chapter_summary(self, content: str) -> str:
+        """生成章节摘要
+
+        提取开头、中间关键段落和结尾，形成结构化摘要
+        """
+        if not content:
+            return ""
+
+        paragraphs = [p.strip() for p in content.split("\n") if p.strip()]
+        if not paragraphs:
+            return content[:500]
+
+        # 提取开头（前2段）
+        opening = "\n".join(paragraphs[:2])
+
+        # 提取中间（如果有足够段落，取中间2段）
+        middle = ""
+        if len(paragraphs) > 6:
+            mid_idx = len(paragraphs) // 2
+            middle = "\n".join(paragraphs[mid_idx : mid_idx + 2])
+
+        # 提取结尾（最后2段）
+        ending = "\n".join(paragraphs[-2:]) if len(paragraphs) > 2 else ""
+
+        # 组合摘要
+        parts = []
+        if opening:
+            parts.append(f"【开头】\n{opening[:200]}")
+        if middle:
+            parts.append(f"【中段】\n{middle[:150]}")
+        if ending:
+            parts.append(f"【结尾】\n{ending[:150]}")
+
+        summary = "\n\n".join(parts)
+        return summary[:800] if len(summary) > 800 else summary
 
     async def close(self) -> None:
         """关闭生成器"""

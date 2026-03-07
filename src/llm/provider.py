@@ -194,7 +194,6 @@ class ToolCallLoop:
         messages.append(Message.user(user_prompt))
 
         iteration = 0
-        final_content = ""
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -336,10 +335,28 @@ class ToolCallLoop:
                         await self.execute_tool(tool_name, tool_args)
                         if self.final_content is not None:
                             return self.final_content
-            # 如果还是没有 complete，使用 response.text
-            final_content = response.text or ""
 
-        return final_content
+            # 如果 LLM 仍然没有调用 complete，检查是否有有效的文本内容
+            # 注意：这可能是不完整的，但作为最后的回退
+            if response.text and len(response.text.strip()) > 100:
+                # 有足够的内容，可能是 LLM 直接返回了正文
+                # 记录警告但返回内容
+                import warnings
+
+                warnings.warn(
+                    "ToolCallLoop 达到最大迭代且 LLM 未调用 complete，"
+                    "使用 response.text 作为回退内容",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                return response.text  # type: ignore[no-any-return]
+
+            # 没有有效内容，返回错误指示
+            return ""
+
+        # 永远不会执行到这里，因为 while 循环只会在 iteration >= max_iterations 时退出
+        # 而 if iteration >= self.max_iterations 块中有所有必要的 return
+        return ""  # type: ignore[unreachable]
 
 
 class LLMProvider:
