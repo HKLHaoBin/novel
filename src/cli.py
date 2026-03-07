@@ -237,14 +237,15 @@ async def cmd_create(args: argparse.Namespace) -> int:
                             console.print("[yellow]已取消设计[/yellow]")
                             return 1
                 else:
+                    # 设计完成后显示蓝图
                     console.print("[green]✓ 设计完成![/green]")
-                    if args.verbose:
-                        console.print(
-                            Panel(
-                                result.content[:500] + "...",
-                                title="设计摘要",
-                            )
+                    console.print(
+                        Panel(
+                            result.content,
+                            title="📋 设计蓝图",
+                            border_style="green",
                         )
+                    )
             else:
                 console.print(f"[red]设计失败: {result.error}[/red]")
                 return 1
