@@ -169,6 +169,14 @@ async def cmd_create(args: argparse.Namespace) -> int:
 
                         if user_input in ["确认", "y", "yes", "ok"]:
                             console.print("[green]✓ 设计已确认![/green]")
+                            # 显示最终设计蓝图
+                            console.print(
+                                Panel(
+                                    result.content,
+                                    title="📋 最终设计蓝图",
+                                    border_style="green",
+                                )
+                            )
                             break
                         elif user_input in ["修改", "m", "modify"]:
                             console.print(
