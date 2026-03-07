@@ -413,7 +413,12 @@ async def cmd_write(args: argparse.Namespace) -> int:
         total = novel_ctx.snapshot.progress.total_chapters
 
         if args.all:
-            start = novel_ctx.snapshot.progress.current_chapter + 1
+            # 优先使用 completed_chapters 计算，更稳健
+            completed = novel_ctx.snapshot.progress.completed_chapters
+            if completed:
+                start = max(completed) + 1
+            else:
+                start = novel_ctx.snapshot.progress.current_chapter + 1
             if start > total:
                 console.print("[green]✅ 所有章节已完成![/green]")
                 return 0

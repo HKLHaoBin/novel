@@ -525,6 +525,9 @@ class NovelStateManager:
         if chapter_num not in snapshot.progress.completed_chapters:
             snapshot.progress.completed_chapters.append(chapter_num)
 
+        # 更新当前章节号
+        snapshot.progress.current_chapter = chapter_num
+
         snapshot.updated_at = datetime.now().isoformat()
 
         # 保存成品（传入章节标题）
