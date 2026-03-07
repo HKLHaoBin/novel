@@ -142,9 +142,9 @@ class ToolCallLoop:
             if self.on_tool_call:
                 self.on_tool_call(name, arguments)
 
-            # 检测 complete 调用
-            if name == "complete" and result.success:
-                # 优先从 result.data 获取（complete 工具放在那里）
+            # 检测 complete/complete_design 调用
+            if name in ("complete", "complete_design") and result.success:
+                # 优先从 result.data 获取（工具放在那里）
                 if result.data and "final_content" in result.data:
                     self.final_content = result.data["final_content"]
                 else:
@@ -265,8 +265,11 @@ class ToolCallLoop:
                     # 执行工具
                     tool_result = await self.execute_tool(tool_name, tool_args)
 
-                    # 检测 complete 调用
-                    if tool_name == "complete" and self.final_content is not None:
+                    # 检测 complete/complete_design 调用
+                    if (
+                        tool_name in ("complete", "complete_design")
+                        and self.final_content is not None
+                    ):
                         return self.final_content
 
                     # 添加工具结果消息
@@ -331,7 +334,7 @@ class ToolCallLoop:
                         tool_args = getattr(tool_call, "arguments", {}) or getattr(
                             tool_call.function, "arguments", {}
                         )
-                    if tool_name == "complete":
+                    if tool_name in ("complete", "complete_design"):
                         await self.execute_tool(tool_name, tool_args)
                         if self.final_content is not None:
                             return self.final_content

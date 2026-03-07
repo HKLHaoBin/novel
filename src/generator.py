@@ -155,7 +155,8 @@ class NovelGenerator:
         result = await self.designer.execute(agent_ctx)
 
         if result.success:
-            # 保存设计结果到 snapshot
+            # 保存设计结果（同时设置 context 和 snapshot）
+            self.novel_ctx.global_summary = result.content
             self.novel_ctx.snapshot.global_summary = result.content
 
             # 将设计中的节点、边、时间点添加到图结构

@@ -159,9 +159,18 @@ class Designer(BaseAgent):
             user_prompt=user_prompt,
         )
 
-        if not final_content:
-            # 尝试从 context.extra 中生成设计摘要
-            final_content = self._generate_summary_from_tools(context)
+        # 检查是否有结构化工具调用数据
+        has_structured_data = bool(
+            context.extra.get("seed")
+            or context.extra.get("blueprint")
+            or context.characters
+        )
+
+        # 如果没有结构化数据，尝试从 context.extra 生成设计摘要
+        if not final_content or not has_structured_data:
+            generated_summary = self._generate_summary_from_tools(context)
+            if generated_summary:
+                final_content = generated_summary
 
         # 收集图结构数据
         nodes_to_add = []

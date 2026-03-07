@@ -1095,16 +1095,18 @@ def design_add_character(
     """
     from src.core.character import CharacterCard
 
-    if not context.characters:
+    # 确保 characters 存在（不创建新 dict，保持引用）
+    if context.characters is None:
         context.characters = {}
 
-    # 检查是否已存在
-    if name in context.characters:
-        return ToolResult(
-            success=False,
-            content=f"角色 '{name}' 已存在",
-            suggestions=["使用不同的角色名，或使用 update_character 更新现有角色"],
-        )
+    # 检查是否已存在（按名字检查）
+    for _existing_id, existing_char in context.characters.items():
+        if existing_char.name == name:
+            return ToolResult(
+                success=False,
+                content=f"角色 '{name}' 已存在",
+                suggestions=["使用不同的角色名，或使用 update_character 更新现有角色"],
+            )
 
     char_id = f"char_{name}"
     char = CharacterCard(
@@ -1143,11 +1145,10 @@ def design_add_location(
         description: 地点描述
         significance: 剧情意义
     """
-    from src.core.map import Location, LocationType
+    from src.core.map import Location, LocationType, WorldMap
 
-    if not context.world_map:
-        from src.core.map import WorldMap
-
+    # 确保 world_map 存在
+    if context.world_map is None:
         context.world_map = WorldMap()
 
     # 检查是否已存在
