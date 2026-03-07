@@ -204,10 +204,12 @@ async def cmd_create(args: argparse.Namespace) -> int:
                                             title="📋 调整后的设计",
                                         )
                                     )
+                                    continue  # 继续等待用户确认
                                 else:
                                     console.print(
                                         f"[red]调整失败: {result.error}[/red]"
                                     )
+                                    continue
                         elif user_input in ["重做", "r", "redo"]:
                             console.print("\n[yellow]正在重新设计...[/yellow]")
                             novel_ctx.snapshot.global_summary = ""
@@ -225,10 +227,12 @@ async def cmd_create(args: argparse.Namespace) -> int:
                                         title="📋 新的设计结果",
                                     )
                                 )
+                                continue  # 继续等待用户确认
                             else:
                                 console.print(
                                     f"[red]重做失败: {result.error}[/red]"
                                 )
+                                continue
                         elif user_input in ["取消", "c", "cancel", "q"]:
                             console.print("[yellow]已取消设计[/yellow]")
                             return 1
@@ -650,6 +654,17 @@ async def cmd_status(args: argparse.Namespace) -> int:
             else:
                 for line in summary.split("\n")[:30]:
                     print(f"  {line}")
+    else:
+        # 设计蓝图为空时的提示
+        console.print(
+            Panel(
+                "[yellow]⚠️ 尚未进行设计[/yellow]\n\n"
+                "请运行以下命令进行设计:\n"
+                f"  [cyan]novel design {snapshot.title}[/cyan]",
+                title="📋 设计蓝图",
+                border_style="yellow",
+            )
+        )
 
     # 时间轴摘要
     if snapshot.timeline_data and snapshot.timeline_data.get("points"):
@@ -834,6 +849,7 @@ def main() -> int:
     )
     write_parser.add_argument("--output", "-o", help="输出文件")
     write_parser.add_argument("--save-dir", help="保存目录")
+    write_parser.add_argument("--verbose", "-v", action="store_true", help="详细输出")
 
     # list 命令
     list_parser = subparsers.add_parser("list", help="列出小说/章节")
