@@ -146,9 +146,16 @@ async def cmd_create(args: argparse.Namespace) -> int:
                                 lines.append(line)
 
                             if lines:
-                                "\n".join(lines)
+                                feedback = "\n".join(lines)
                                 print("\n正在根据修改建议调整设计...")
-                                # 重新设计，带上修改意见
+                                # 更新 user_guidance 加入修改意见
+                                novel_ctx.snapshot.user_guidance = (
+                                    f"{novel_ctx.snapshot.user_guidance}\n"
+                                    f"修改意见: {feedback}"
+                                )
+                                generator.coordinator.state_manager.save_draft(
+                                    novel_ctx.snapshot
+                                )
                                 result = await generator.design()
                                 if result.success:
                                     print("\n调整后的设计:")
@@ -157,6 +164,11 @@ async def cmd_create(args: argparse.Namespace) -> int:
                                     print(f"调整失败: {result.error}")
                         elif user_input in ["重做", "r", "redo"]:
                             print("\n正在重新设计...")
+                            # 清除旧的设计，确保从头开始
+                            novel_ctx.snapshot.global_summary = ""
+                            generator.coordinator.state_manager.save_draft(
+                                novel_ctx.snapshot
+                            )
                             result = await generator.design()
                             if result.success:
                                 print("\n新的设计结果:")
@@ -218,11 +230,21 @@ async def cmd_design(args: argparse.Namespace) -> int:
             print(f"错误: 未找到小说 '{args.title}'")
             return 1
 
+        # 强制重新设计（清除旧设计）
+        if args.force:
+            novel_ctx.snapshot.global_summary = ""
+            novel_ctx.global_summary = ""
+            print("已清除旧的设计，将重新设计...")
+
         # 更新章节数（如果指定）
         if args.chapters:
             novel_ctx.snapshot.progress.total_chapters = args.chapters
+            # 如果章节数改变了，也清除旧设计
+            novel_ctx.snapshot.global_summary = ""
+            novel_ctx.global_summary = ""
             generator.coordinator.state_manager.save_draft(novel_ctx.snapshot)
             print(f"目标章节数已更新为: {args.chapters}")
+            print("已清除旧的设计，将重新设计...")
 
         print(f"正在为《{args.title}》进行架构设计...")
 
@@ -568,6 +590,9 @@ def main() -> int:
     )
     design_parser.add_argument(
         "--chapters", "-c", type=int, help="目标章节数 (默认使用创建时的设置)"
+    )
+    design_parser.add_argument(
+        "--force", "-f", action="store_true", help="强制重新设计，清除旧设计"
     )
     design_parser.add_argument("--save-dir", help="保存目录")
 

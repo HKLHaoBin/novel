@@ -129,11 +129,18 @@ class Designer(BaseAgent):
         """设计核心种子"""
         total_chapters = context.extra.get("total_chapters", 20)
         word_count = context.extra.get("word_count_per_chapter", 3000)
+        # 获取用户的额外指导（如修改意见）
+        user_guidance = context.extra.get("user_guidance", "")
+
+        # 构建完整的用户需求
+        full_user_input = user_input
+        if user_guidance:
+            full_user_input = f"{user_input}\n\n【用户额外要求】\n{user_guidance}"
 
         prompt = f"""请根据以下需求，设计小说的核心种子。
 
 【用户需求】
-{user_input}
+{full_user_input}
 
 【约束条件】
 - 总章节：约{total_chapters}章
