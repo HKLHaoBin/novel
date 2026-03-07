@@ -7,32 +7,34 @@ from typing import Any
 @dataclass
 class Ability:
     """能力"""
+
     name: str
-    is_public: bool = True      # 是否公开
-    is_future: bool = False     # 是否将来获得
-    description: str = ""       # 能力描述
+    is_public: bool = True  # 是否公开
+    is_future: bool = False  # 是否将来获得
+    description: str = ""  # 能力描述
     attrs: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class CharacterCard:
     """角色卡"""
+
     id: str
     name: str
     gender: str = ""
-    age: str = ""               # 年龄（可以是具体数字或描述）
-    personality: str = ""       # 性格
-    
+    age: str = ""  # 年龄（可以是具体数字或描述）
+    personality: str = ""  # 性格
+
     # 能力列表
     abilities: dict[str, Ability] = field(default_factory=dict)
-    
+
     # 备注（详细状态描述）
     notes: list[str] = field(default_factory=list)
-    
+
     # 最近一次行为和结果
     last_action: str = ""
     last_result: str = ""
-    
+
     # 其他属性
     attrs: dict[str, Any] = field(default_factory=dict)
 
@@ -57,7 +59,9 @@ class CharacterCard:
 
     def get_hidden_abilities(self) -> list[Ability]:
         """获取未公开能力"""
-        return [a for a in self.abilities.values() if not a.is_public and not a.is_future]
+        return [
+            a for a in self.abilities.values() if not a.is_public and not a.is_future
+        ]
 
     def get_future_abilities(self) -> list[Ability]:
         """获取将来能力"""

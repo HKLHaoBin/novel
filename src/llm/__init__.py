@@ -1,25 +1,23 @@
 """LLM 模块 - 封装 intelligence 和 superficial-thinking 库"""
 
-from .provider import (
-    LLMProvider,
-    create_provider,
-    INTELLIGENCE_AVAILABLE,
-)
-
 from .knowledge import (
+    MEMORY_AVAILABLE,
     KnowledgeBase,
     create_knowledge_base,
-    MEMORY_AVAILABLE,
+)
+from .provider import (
+    INTELLIGENCE_AVAILABLE,
+    LLMProvider,
+    create_provider,
 )
 
 __all__ = [
+    "INTELLIGENCE_AVAILABLE",
+    "MEMORY_AVAILABLE",
+    # Knowledge
+    "KnowledgeBase",
     # Provider
     "LLMProvider",
-    "create_provider",
-    "INTELLIGENCE_AVAILABLE",
-    
-    # Knowledge
-    "KnowledgeBase", 
     "create_knowledge_base",
-    "MEMORY_AVAILABLE",
+    "create_provider",
 ]

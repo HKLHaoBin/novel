@@ -7,32 +7,35 @@ from typing import Any
 
 class LocationType(Enum):
     """地点类型"""
-    WORLD = "world"           # 世界
-    CONTINENT = "continent"   # 大陆
-    COUNTRY = "country"       # 国家
-    REGION = "region"         # 区域
-    CITY = "city"             # 城市
-    DISTRICT = "district"     # 区/区域
-    BUILDING = "building"     # 建筑
-    ROOM = "room"             # 房间
-    OTHER = "other"           # 其他
+
+    WORLD = "world"  # 世界
+    CONTINENT = "continent"  # 大陆
+    COUNTRY = "country"  # 国家
+    REGION = "region"  # 区域
+    CITY = "city"  # 城市
+    DISTRICT = "district"  # 区/区域
+    BUILDING = "building"  # 建筑
+    ROOM = "room"  # 房间
+    OTHER = "other"  # 其他
 
 
 class LocationRelation(Enum):
     """地点关系类型"""
-    CONTAINS = "contains"     # 包含（父级）
-    ADJACENT = "adjacent"     # 相邻
-    CONNECTED = "connected"   # 可达（有路径）
+
+    CONTAINS = "contains"  # 包含（父级）
+    ADJACENT = "adjacent"  # 相邻
+    CONNECTED = "connected"  # 可达（有路径）
 
 
 @dataclass
 class Location:
     """地点"""
+
     id: str
     name: str
     type: LocationType = LocationType.OTHER
     description: str = ""
-    parent_id: str | None = None        # 父级地点（层级关系）
+    parent_id: str | None = None  # 父级地点（层级关系）
     attrs: dict[str, Any] = field(default_factory=dict)
 
     def set_parent(self, parent_id: str) -> None:
@@ -43,6 +46,7 @@ class Location:
 @dataclass
 class LocationEdge:
     """地点关系边"""
+
     id: str
     type: LocationRelation
     source_id: str
@@ -53,6 +57,7 @@ class LocationEdge:
 @dataclass
 class WorldMap:
     """世界地图"""
+
     locations: dict[str, Location] = field(default_factory=dict)
     edges: dict[str, LocationEdge] = field(default_factory=dict)
 
@@ -71,7 +76,8 @@ class WorldMap:
         del self.locations[location_id]
         # 删除相关的边
         self.edges = {
-            eid: e for eid, e in self.edges.items()
+            eid: e
+            for eid, e in self.edges.items()
             if e.source_id != location_id and e.target_id != location_id
         }
         return True

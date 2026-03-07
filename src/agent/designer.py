@@ -9,51 +9,53 @@
 """
 
 from .base import AgentContext, AgentResult, BaseAgent
-from .context_builder import build_quick_reference
 from .prompt_loader import prompt_library
 
 
 class Designer(BaseAgent):
     """设计师 Agent"""
-    
+
     name = "Designer"
     description = "专业小说架构师，精通雪花写作法、角色弧光理论和三幕式情节设计"
-    
+    _system_prompt: str
+    _metadata: dict
+
     def __init__(self, llm=None):
         """初始化设计师"""
         super().__init__(llm=llm)
         self._load_prompts()
-    
+
     def _load_prompts(self):
         """加载提示词模板"""
         self._system_prompt = prompt_library.get_system_prompt("designer")
         self._metadata = prompt_library.get_metadata("designer")
         self.name = self._metadata.get("name", "Designer")
         self.description = self._metadata.get("description", "")
-    
+
     async def execute(self, context: AgentContext) -> AgentResult:
         """
         执行设计任务
-        
+
         Args:
             context: 执行上下文，需要包含:
                 - user_input: 用户需求描述
-                - extra.get("phase"): 当前阶段 (seed/character/world/plot/blueprint/full)
-                
+                - extra.get("phase"): 当前阶段
+                  (seed/character/world/plot/blueprint/full)
+
         Returns:
             设计结果
         """
         self._context = context
-        
+
         phase = context.extra.get("phase", "full")
         user_input = context.user_input
-        
+
         if not user_input:
             return AgentResult(
                 success=False,
                 error="缺少用户需求描述",
             )
-        
+
         try:
             if phase == "full":
                 return await self._full_design(context)
@@ -75,38 +77,44 @@ class Designer(BaseAgent):
         except Exception as e:
             return AgentResult(
                 success=False,
-                error=f"设计过程出错: {str(e)}",
+                error=f"设计过程出错: {e!s}",
             )
-    
+
     async def _full_design(self, context: AgentContext) -> AgentResult:
         """完整设计流程"""
         results: list[AgentResult] = []
         accumulated_content = ""  # 累积的设计内容
-        
+
         # seed 阶段需要额外参数
-        seed_result = await self._design_seed(context, context.user_input, accumulated_content)
+        seed_result = await self._design_seed(
+            context, context.user_input, accumulated_content
+        )
         if not seed_result.success:
             return seed_result
         results.append(seed_result)
         accumulated_content += f"\n\n【核心种子】\n{seed_result.content}"
-        
+
         # 后续阶段，传递累积的内容
-        phases: list[tuple[str, object]] = [
+        from collections.abc import Callable, Coroutine
+        from typing import Any
+
+        PhaseFunc = Callable[[AgentContext], Coroutine[Any, Any, AgentResult]]
+        phases: list[tuple[str, PhaseFunc]] = [
             ("character", self._design_characters),
             ("world", self._design_world),
             ("plot", self._design_plot),
             ("blueprint", self._design_blueprint),
         ]
-        
+
         for phase_name, phase_func in phases:
             # 将累积内容传入 context.extra
             context.extra["accumulated_design"] = accumulated_content
-            result = await phase_func(context)  # type: ignore[operator]
+            result = await phase_func(context)
             if not result.success:
                 return result
             results.append(result)
             accumulated_content += f"\n\n【{phase_name}】\n{result.content}"
-        
+
         return AgentResult(
             success=True,
             content=accumulated_content,
@@ -114,12 +122,14 @@ class Designer(BaseAgent):
             edges_to_add=[e for r in results for e in r.edges_to_add],
             timepoints_to_add=[t for r in results for t in r.timepoints_to_add],
         )
-    
-    async def _design_seed(self, context: AgentContext, user_input: str, accumulated: str = "") -> AgentResult:
+
+    async def _design_seed(
+        self, context: AgentContext, user_input: str, accumulated: str = ""
+    ) -> AgentResult:
         """设计核心种子"""
         total_chapters = context.extra.get("total_chapters", 20)
         word_count = context.extra.get("word_count_per_chapter", 3000)
-        
+
         prompt = f"""请根据以下需求，设计小说的核心种子。
 
 【用户需求】
@@ -145,20 +155,20 @@ class Designer(BaseAgent):
 └── 目标读者：[...]
 
 仅输出核心种子内容，不要解释。"""
-        
+
         content = await self._call_llm(prompt, system=self._system_prompt)
-        
+
         return AgentResult(
             success=True,
             content=content,
         )
-    
+
     async def _design_characters(self, context: AgentContext) -> AgentResult:
         """设计角色"""
         # 获取累积的设计内容和用户原始需求
         accumulated = context.extra.get("accumulated_design", "")
         user_guidance = context.user_input
-        
+
         prompt = f"""请基于以下信息，设计小说的主要角色。
 
 【用户原始需求】
@@ -191,18 +201,18 @@ class Designer(BaseAgent):
 │   └── ...
 
 仅输出角色设计内容，不要解释。"""
-        
+
         content = await self._call_llm(prompt, system=self._system_prompt)
-        
+
         return AgentResult(
             success=True,
             content=content,
         )
-    
+
     async def _design_world(self, context: AgentContext) -> AgentResult:
         """设计世界观"""
         accumulated = context.extra.get("accumulated_design", "")
-        
+
         prompt = f"""请基于以下信息，设计小说的世界观。
 
 【用户原始需求】
@@ -236,18 +246,18 @@ class Designer(BaseAgent):
     └── 建筑暗示：[风格→文明困境]
 
 仅输出世界观内容，不要解释。"""
-        
+
         content = await self._call_llm(prompt, system=self._system_prompt)
-        
+
         return AgentResult(
             success=True,
             content=content,
         )
-    
+
     async def _design_plot(self, context: AgentContext) -> AgentResult:
         """设计情节架构"""
         accumulated = context.extra.get("accumulated_design", "")
-        
+
         prompt = f"""请基于以下信息，设计小说的情节架构。
 
 【用户原始需求】
@@ -282,19 +292,19 @@ class Designer(BaseAgent):
     └── 新的平衡：[...]
 
 仅输出情节架构内容，不要解释。"""
-        
+
         content = await self._call_llm(prompt, system=self._system_prompt)
-        
+
         return AgentResult(
             success=True,
             content=content,
         )
-    
+
     async def _design_blueprint(self, context: AgentContext) -> AgentResult:
         """设计章节蓝图"""
         accumulated = context.extra.get("accumulated_design", "")
         total_chapters = context.extra.get("total_chapters", 20)
-        
+
         prompt = f"""请基于以下信息，设计小说的章节蓝图。
 
 【用户原始需求】
@@ -326,14 +336,14 @@ class Designer(BaseAgent):
 ...
 
 仅输出章节蓝图内容，不要解释。"""
-        
+
         content = await self._call_llm(prompt, system=self._system_prompt)
-        
+
         return AgentResult(
             success=True,
             content=content,
         )
-    
+
     def get_system_prompt(self) -> str:
         """获取系统提示词"""
         return self._system_prompt

@@ -7,10 +7,11 @@ from typing import Any
 @dataclass
 class TimePoint:
     """时间点"""
+
     id: str
-    label: str              # 时间表达：如"第三章"、"主角离家后第二天"
-    prev_id: str | None = None   # 前一个时间点
-    next_id: str | None = None   # 后一个时间点
+    label: str  # 时间表达：如"第三章"、"主角离家后第二天"
+    prev_id: str | None = None  # 前一个时间点
+    next_id: str | None = None  # 后一个时间点
     node_ids: list[str] = field(default_factory=list)  # 该时间点的节点
     # 角色位置记录：{角色卡ID: 地点ID}
     character_locations: dict[str, str] = field(default_factory=dict)
@@ -20,11 +21,12 @@ class TimePoint:
 @dataclass
 class Timeline:
     """时间轴 - 双向链表实现"""
+
     id: str = ""
     name: str = ""  # 时间线名称：主线、支线A...
     points: dict[str, TimePoint] = field(default_factory=dict)
-    head_id: str | None = None          # 链表头
-    tail_id: str | None = None          # 链表尾
+    head_id: str | None = None  # 链表头
+    tail_id: str | None = None  # 链表尾
 
     def append(self, point: TimePoint) -> None:
         """在末尾添加时间点"""
@@ -186,18 +188,14 @@ class Timeline:
         point.character_locations[character_id] = location_id
         return True
 
-    def get_character_location(
-        self, point_id: str, character_id: str
-    ) -> str | None:
+    def get_character_location(self, point_id: str, character_id: str) -> str | None:
         """获取角色在某时间点的位置"""
         point = self.get_point(point_id)
         if point is None:
             return None
         return point.character_locations.get(character_id)
 
-    def remove_character_location(
-        self, point_id: str, character_id: str
-    ) -> bool:
+    def remove_character_location(self, point_id: str, character_id: str) -> bool:
         """移除角色在某时间点的位置"""
         point = self.get_point(point_id)
         if point is None:
@@ -207,15 +205,14 @@ class Timeline:
             return True
         return False
 
-    def get_characters_at_location(
-        self, point_id: str, location_id: str
-    ) -> list[str]:
+    def get_characters_at_location(self, point_id: str, location_id: str) -> list[str]:
         """获取某时间点在某地点的所有角色"""
         point = self.get_point(point_id)
         if point is None:
             return []
         return [
-            char_id for char_id, loc_id in point.character_locations.items()
+            char_id
+            for char_id, loc_id in point.character_locations.items()
             if loc_id == location_id
         ]
 
@@ -240,7 +237,9 @@ class Timeline:
         if character_ids:
             for char_id in character_ids:
                 if char_id in prev_point.character_locations:
-                    point.character_locations[char_id] = prev_point.character_locations[char_id]
+                    point.character_locations[char_id] = prev_point.character_locations[
+                        char_id
+                    ]
         else:
             point.character_locations = prev_point.character_locations.copy()
         return True

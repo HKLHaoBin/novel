@@ -7,6 +7,7 @@
 - Polisher: 文笔优化师，专注文字润色和风格统一
 """
 
+from .auditor import Auditor, quick_check
 from .base import AgentContext, AgentResult, BaseAgent
 from .context_builder import (
     build_full_context,
@@ -14,56 +15,75 @@ from .context_builder import (
     build_uncertainty_guidance,
 )
 from .designer import Designer
-from .writer import Writer
-from .auditor import Auditor, quick_check
+from .human_loop import EditMode, HumanLoopManager, InteractionResult
 from .polisher import Polisher, quick_polish
+from .prompt_loader import (
+    get_agent_info,
+    get_system_prompt,
+    list_available_prompts,
+    load_prompt_template,
+    prompt_library,
+)
 from .tools import (
     Tool,
     ToolResult,
     ToolType,
-    get_all_tools,
+    add_event,
     build_tools_description,
+    check_consistency,
+    get_all_tools,
     query_character,
-    query_location,
-    query_timeline,
     query_events,
+    query_location,
     query_relationships,
+    query_timeline,
+    suggest_next,
     update_character,
     update_location,
-    add_event,
-    check_consistency,
-    suggest_next,
 )
-from .prompt_loader import (
-    prompt_library,
-    load_prompt_template,
-    get_system_prompt,
-    get_agent_info,
-    list_available_prompts,
-)
+from .writer import Writer
 
 __all__ = [
     # Base
-    "AgentContext", "AgentResult", "BaseAgent",
-    
+    "AgentContext",
+    "AgentResult",
+    "Auditor",
+    "BaseAgent",
     # Agents
-    "Designer", "Writer", "Auditor", "Polisher",
-    
-    # Context
-    "build_full_context", "build_quick_reference", "build_uncertainty_guidance",
-    
+    "Designer",
+    # Human Loop
+    "EditMode",
+    "HumanLoopManager",
+    "InteractionResult",
+    "Polisher",
     # Tools
-    "Tool", "ToolResult", "ToolType",
-    "get_all_tools", "build_tools_description",
-    "query_character", "query_location", "query_timeline",
-    "query_events", "query_relationships",
-    "update_character", "update_location", "add_event",
-    "check_consistency", "suggest_next",
-    
+    "Tool",
+    "ToolResult",
+    "ToolType",
+    "Writer",
+    "add_event",
+    # Context
+    "build_full_context",
+    "build_quick_reference",
+    "build_tools_description",
+    "build_uncertainty_guidance",
+    "check_consistency",
+    "get_agent_info",
+    "get_all_tools",
+    "get_system_prompt",
+    "list_available_prompts",
+    "load_prompt_template",
     # Prompt Loader
-    "prompt_library", "load_prompt_template",
-    "get_system_prompt", "get_agent_info", "list_available_prompts",
-    
+    "prompt_library",
+    "query_character",
+    "query_events",
+    "query_location",
+    "query_relationships",
+    "query_timeline",
     # Quick methods
-    "quick_check", "quick_polish",
+    "quick_check",
+    "quick_polish",
+    "suggest_next",
+    "update_character",
+    "update_location",
 ]

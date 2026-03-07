@@ -6,58 +6,61 @@
 3. 集成上下文构建器
 """
 
+from src.llm.provider import ToolCallLoop
+
 from .base import AgentContext, AgentResult, BaseAgent
 from .context_builder import build_full_context
 from .prompt_loader import prompt_library
 from .tools import get_all_tools
-from src.llm.provider import ToolCallLoop
 
 
 class Writer(BaseAgent):
     """作家 Agent"""
-    
+
     name = "Writer"
     description = "专业小说作家，擅长生动场景描写、自然对话设计和扣人心弦的情节推进"
-    
+    _system_prompt: str
+    _metadata: dict
+
     def __init__(self, llm=None):
         """初始化作家"""
         super().__init__(llm=llm)
         self._load_prompts()
         self._tools = get_all_tools()
-    
+
     def _load_prompts(self):
         """加载提示词模板"""
         self._system_prompt = prompt_library.get_system_prompt("writer")
         self._metadata = prompt_library.get_metadata("writer")
         self.name = self._metadata.get("name", "Writer")
         self.description = self._metadata.get("description", "")
-    
+
     async def execute(self, context: AgentContext) -> AgentResult:
         """
         执行写作任务
-        
+
         Args:
             context: 执行上下文，需要包含:
                 - extra.get("chapter_num"): 章节号
                 - extra.get("chapter_blueprint"): 章节蓝图/大纲
                 - extra.get("word_count"): 目标字数（默认3000）
-                
+
         Returns:
             写作结果
         """
         self._context = context
-        
+
         chapter_num = context.extra.get("chapter_num", 1)
         blueprint = context.extra.get("chapter_blueprint", "")
         word_count = context.extra.get("word_count", 3000)
-        
+
         try:
             # 构建基础上下文
             ctx_text = build_full_context(context)
-            
+
             # 判断是第一章还是后续章节
             is_first_chapter = chapter_num == 1
-            
+
             if is_first_chapter:
                 content = await self._write_first_chapter(
                     context, ctx_text, blueprint, word_count
@@ -66,24 +69,25 @@ class Writer(BaseAgent):
                 content = await self._write_chapter(
                     context, ctx_text, blueprint, chapter_num, word_count
                 )
-            
+
             # 提取章节标题
             title = self._extract_title(content, chapter_num)
-            
+
             return AgentResult(
                 success=True,
                 content=content,
                 chapter_num=chapter_num,
                 chapter_title=title,
             )
-            
+
         except Exception as e:
             import traceback
+
             return AgentResult(
                 success=False,
-                error=f"写作过程出错: {str(e)}\n{traceback.format_exc()}",
+                error=f"写作过程出错: {e!s}\n{traceback.format_exc()}",
             )
-    
+
     async def _write_first_chapter(
         self,
         context: AgentContext,
@@ -92,7 +96,7 @@ class Writer(BaseAgent):
         word_count: int,
     ) -> str:
         """撰写第一章"""
-        
+
         system_prompt = f"""你是专业小说作家。
 
 【当前任务】撰写小说第一章
@@ -122,7 +126,7 @@ class Writer(BaseAgent):
         user_prompt = f"""请撰写第一章。
 
 【章节大纲】
-{blueprint if blueprint else '根据设定自由发挥，开篇要吸引人'}
+{blueprint if blueprint else "根据设定自由发挥，开篇要吸引人"}
 
 【目标字数】
 {word_count}字左右
@@ -137,18 +141,21 @@ class Writer(BaseAgent):
             tools=self._tools,
             context=context,
             max_iterations=5,
-            on_tool_call=lambda n, a: print(f"  [工具调用] {n}({a})")
+            on_tool_call=lambda n, a: print(f"  [工具调用] {n}({a})"),
         )
-        
+
+        if self.llm is None:
+            raise RuntimeError("LLM provider 未设置")
+
         content = await tool_loop.run(
             provider=self.llm,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=word_count + 500,
         )
-        
+
         return content
-    
+
     async def _write_chapter(
         self,
         context: AgentContext,
@@ -158,7 +165,7 @@ class Writer(BaseAgent):
         word_count: int,
     ) -> str:
         """撰写后续章节（带工具调用）"""
-        
+
         system_prompt = f"""你是专业小说作家。
 
 【当前任务】撰写小说第{chapter_num}章
@@ -207,43 +214,47 @@ class Writer(BaseAgent):
 步骤2: 确认上一章的风格、角色名字、情节发展
 步骤3: 撰写本章内容，确保与前文连贯，标题不重复
 步骤4: 调用 complete(content) 提交"""
-        
+
         # 使用工具调用循环
         tool_loop = ToolCallLoop(
             tools=self._tools,
             context=context,
             max_iterations=6,
-            on_tool_call=lambda n, a: print(f"  [工具调用] {n}")
+            on_tool_call=lambda n, a: print(f"  [工具调用] {n}"),
         )
-        
+
+        if self.llm is None:
+            raise RuntimeError("LLM provider 未设置")
+
         content = await tool_loop.run(
             provider=self.llm,
             system_prompt=system_prompt,
             user_prompt=user_prompt,
             max_tokens=word_count + 500,
         )
-        
+
         return content
-    
+
     def _extract_title(self, content: str, chapter_num: int) -> str:
         """从内容中提取标题"""
         import re
-        lines = content.strip().split('\n')
+
+        lines = content.strip().split("\n")
         if lines:
             first_line = lines[0].strip()
             # 匹配 "第X章 标题" 或 "第X章：标题" 等格式
-            match = re.match(r'第\d+章[：:\s]*(.+?)(?:\n|$)', first_line)
+            match = re.match(r"第\d+章[：:\s]*(.+?)(?:\n|$)", first_line)
             if match:
                 title = match.group(1).strip()
                 # 清理标题中的非法字符
-                title = re.sub(r'[。：:，,！!？?；;　\s]+', '', title)
+                title = re.sub(r"[。：:，,！!？?；;　\s]+", "", title)
                 # 限制长度
                 if len(title) > 20:
                     title = title[:20]
                 return title
-        
+
         return ""
-    
+
     def get_system_prompt(self) -> str:
         """获取系统提示词"""
         return self._system_prompt

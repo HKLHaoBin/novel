@@ -7,6 +7,7 @@ from typing import Any
 
 class NodeType(Enum):
     """节点类型枚举"""
+
     WORLD = "world"
     CHARACTER = "character"
     MAIN_PLOT = "main_plot"
@@ -19,6 +20,7 @@ class NodeType(Enum):
 
 class EdgeType(Enum):
     """边类型枚举"""
+
     BELONGS_TO = "belongs_to"
     INVOLVES = "involves"
     CAUSES = "causes"
@@ -30,6 +32,7 @@ class EdgeType(Enum):
 @dataclass
 class Node:
     """图节点"""
+
     id: str
     type: NodeType
     attrs: dict[str, Any] = field(default_factory=dict)
@@ -43,6 +46,7 @@ class Node:
 @dataclass
 class Edge:
     """图边"""
+
     id: str
     type: EdgeType
     source_id: str
@@ -53,6 +57,7 @@ class Edge:
 @dataclass
 class Graph:
     """图结构"""
+
     nodes: dict[str, Node] = field(default_factory=dict)
     edges: dict[str, Edge] = field(default_factory=dict)
 
@@ -71,7 +76,8 @@ class Graph:
         del self.nodes[node_id]
         # 删除相关的边
         self.edges = {
-            eid: e for eid, e in self.edges.items()
+            eid: e
+            for eid, e in self.edges.items()
             if e.source_id != node_id and e.target_id != node_id
         }
         return True
