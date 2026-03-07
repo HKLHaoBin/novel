@@ -775,6 +775,100 @@ async def cmd_export(args: argparse.Namespace) -> int:
     return 0
 
 
+async def cmd_web(args: argparse.Namespace) -> int:
+    """启动前端 Web 服务"""
+    import subprocess
+    import webbrowser
+    from pathlib import Path
+    import time
+
+    # 获取项目根目录
+    project_root = Path(__file__).parent.parent
+    main_py = project_root / "src" / "main.py"
+
+    if not main_py.exists():
+        console.print(f"[red]错误: 未找到 {main_py}[/red]")
+        return 1
+
+    host = args.host
+    port = args.port
+    reload = args.reload
+    no_browser = args.no_browser
+
+    # 构建启动命令
+    cmd = [
+        sys.executable,
+        "-m",
+        "uvicorn",
+        "src.main:app",
+        "--host", host,
+        "--port", str(port),
+    ]
+
+    if reload:
+        cmd.append("--reload")
+
+    url = f"http://{host}:{port}"
+
+    console.print(
+        Panel(
+            f"[bold green]🚀 启动 Web 服务[/bold green]\n\n"
+            f"地址: [cyan]{url}[/cyan]\n"
+            f"热重载: [yellow]{'开启' if reload else '关闭'}[/yellow]\n\n"
+            f"[dim]按 Ctrl+C 停止服务[/dim]",
+            border_style="green",
+        )
+    )
+
+    # 延迟打开浏览器（给服务启动时间）
+    if not no_browser:
+        def open_browser():
+            time.sleep(1.5)
+            webbrowser.open(url)
+
+        import threading
+        threading.Thread(target=open_browser, daemon=True).start()
+
+    # 启动服务
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=str(project_root),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+            universal_newlines=True
+        )
+
+        # 实时输出日志
+        for line in process.stdout:
+            line = line.rstrip()
+            if line:
+                # 美化 uvicorn 日志输出
+                if "Uvicorn running" in line:
+                    console.print(f"[green]{line}[/green]")
+                elif "Application startup complete" in line:
+                    console.print(f"[green]{line}[/green]")
+                elif "error" in line.lower() or "error" in line.lower():
+                    console.print(f"[red]{line}[/red]")
+                else:
+                    console.print(f"[dim]{line}[/dim]")
+
+        process.wait()
+
+    except KeyboardInterrupt:
+        console.print("\n[yellow]正在停止服务...[/yellow]")
+        process.terminate()
+        process.wait()
+        console.print("[green]✓ 服务已停止[/green]")
+    except Exception as e:
+        console.print(f"[red]启动失败: {e}[/red]")
+        return 1
+
+    return 0
+
+
 def main() -> int:
     """主入口"""
     parser = argparse.ArgumentParser(
@@ -879,6 +973,33 @@ def main() -> int:
     export_parser.add_argument("--output", "-o", help="输出文件")
     export_parser.add_argument("--save-dir", help="保存目录")
 
+    # web 命令 - 启动前端 Web 服务
+    web_parser = subparsers.add_parser("web", help="启动前端 Web 服务")
+    web_parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="服务器绑定的主机地址 (默认: 127.0.0.1)"
+    )
+    web_parser.add_argument(
+        "--port",
+        "-p",
+        type=int,
+        default=8000,
+        help="服务器端口 (默认: 8000)"
+    )
+    web_parser.add_argument(
+        "--reload",
+        "-r",
+        action="store_true",
+        help="启用热重载模式 (开发时使用)"
+    )
+    web_parser.add_argument(
+        "--no-browser",
+        "-n",
+        action="store_true",
+        help="不自动打开浏览器"
+    )
+
     args = parser.parse_args()
 
     if not args.command:
@@ -894,6 +1015,7 @@ def main() -> int:
         "list": cmd_list,
         "status": cmd_status,
         "export": cmd_export,
+        "web": cmd_web,
     }
 
     if args.command in commands:
