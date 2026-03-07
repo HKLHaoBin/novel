@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dawn-shuttle-novel"
-version = "0.3.0"
+version = "0.3.1"
 description = "AI 小说生成器 - 支持长篇小说自动生成"
 readme = "README.md"
 license = "MIT"
