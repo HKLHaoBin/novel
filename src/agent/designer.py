@@ -149,8 +149,6 @@ class Designer(BaseAgent):
         """
         import re
 
-        print("[Designer] 执行扩展设计模式...")
-
         # 解析原有章节数和目标章节数
         match = re.search(r"原有(\d+)章.*扩展到(\d+)章", user_guidance)
         if not match:
@@ -158,7 +156,6 @@ class Designer(BaseAgent):
 
         old_chapters = int(match.group(1))
         new_chapters = int(match.group(2))
-        print(f"[Designer] 从 {old_chapters} 章扩展到 {new_chapters} 章")
 
         # 1. 生成新的章节蓝图
         context.extra["accumulated_design"] = existing_design
@@ -302,7 +299,6 @@ class Designer(BaseAgent):
                                 attrs={"name": char_name, "role": char_role},
                             )
                             nodes.append(node)
-                            print(f"[Designer] 添加新角色: {char_name}")
 
                 elif current_section == "location":
                     parts = content.split("|")
@@ -332,7 +328,6 @@ class Designer(BaseAgent):
                             if context.world_map:
                                 context.world_map.add_location(loc)
                             existing_locations.add(loc_name)
-                            print(f"[Designer] 添加新地点: {loc_name}")
 
                 elif current_section == "event":
                     parts = content.split("|")
@@ -365,10 +360,6 @@ class Designer(BaseAgent):
                                     time_point_id=tp.id,
                                 )
                                 nodes.append(event_node)
-                                print(
-                                    "[Designer] "
-                                    f"添加新事件: 第{chapter_num}章 {event_name}"
-                                )
 
         return {"nodes": nodes, "edges": edges, "timepoints": timepoints}
 

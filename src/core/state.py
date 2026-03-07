@@ -154,9 +154,13 @@ class NovelStateManager:
         novel_dir = self._get_novel_dir(title)
         novel_dir.mkdir(parents=True, exist_ok=True)
 
-        # 文件名格式：第1章 章节名.txt
-        if chapter_title:
-            filename = f"第{chapter_num}章 {chapter_title}.txt"
+        # 文件名格式：第1章 章节名.txt 或 第1章.txt
+        if chapter_title and chapter_title.strip():
+            # 清理标题中的非法字符
+            safe_title = "".join(
+                c for c in chapter_title.strip() if c not in r'<>:"/\|?*'
+            )
+            filename = f"第{chapter_num}章 {safe_title}.txt"
         else:
             filename = f"第{chapter_num}章.txt"
 

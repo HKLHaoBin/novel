@@ -332,8 +332,21 @@ async def cmd_write(args: argparse.Namespace) -> int:
         save_dir=args.save_dir or "./novels",
     )
 
+    # 进度回调 - 使用更美观的样式
     def on_progress(stage: str, message: str):
-        print(f"[{stage}] {message}")
+        stage_icons = {
+            "created": "✨",
+            "designing": "🎨",
+            "designed": "✅",
+            "writing": "✍️",
+            "auditing": "🔍",
+            "polishing": "✨",
+            "chapter_complete": "📖",
+            "error": "❌",
+        }
+        icon = stage_icons.get(stage, "▶")
+        if args.verbose:
+            print(f"  {icon} {message}")
 
     generator.on_progress(on_progress)
 
@@ -342,7 +355,7 @@ async def cmd_write(args: argparse.Namespace) -> int:
         novel_ctx = await generator.load_novel(args.title)
 
         if not novel_ctx:
-            print(f"错误: 未找到小说 '{args.title}'")
+            print(f"❌ 未找到小说 '{args.title}'")
             return 1
 
         total = novel_ctx.snapshot.progress.total_chapters
@@ -351,10 +364,10 @@ async def cmd_write(args: argparse.Namespace) -> int:
             # 写全部章节
             start = novel_ctx.snapshot.progress.current_chapter + 1
             if start > total:
-                print("所有章节已完成!")
+                print("✅ 所有章节已完成!")
                 return 0
 
-            print(f"开始撰写第 {start} 到 {total} 章...")
+            print(f"\n📝 开始撰写第 {start} 到 {total} 章...\n")
 
             results = await generator.write_all_chapters(
                 start=start,
@@ -373,28 +386,28 @@ async def cmd_write(args: argparse.Namespace) -> int:
 
                     if not interaction.confirmed:
                         if interaction.feedback:
-                            print(f"重写要求: {interaction.feedback}")
-                            # TODO: 实现重写逻辑
-                        print("已放弃此章节")
+                            print(f"  🔄 重写要求: {interaction.feedback}")
+                        print("  ⏭️ 已放弃此章节")
                         return 1
 
                     if interaction.modified:
                         result.content = interaction.content
 
                     content_len = len(result.content) if result.content else 0
+                    title_display = result.chapter_title or "无题"
                     print(
-                        f"\n第 {result.chapter_num} 章「{result.chapter_title}」"
-                        f"完成 ({content_len} 字)"
+                        f"\n  ✅ 第 {result.chapter_num} 章"
+                        f"「{title_display}」({content_len} 字)"
                     )
                 else:
-                    print(f"\n第 {result.chapter_num} 章失败: {result.error}")
+                    print(f"\n  ❌ 第 {result.chapter_num} 章失败: {result.error}")
                     return 1
         else:
             # 写单章
             chapter_num = args.chapter
 
             if chapter_num > total:
-                print(f"错误: 章节号 {chapter_num} 超出范围 (总共 {total} 章)")
+                print(f"❌ 章节号 {chapter_num} 超出范围 (总共 {total} 章)")
                 return 1
 
             result = await generator.write_chapter(
@@ -413,32 +426,32 @@ async def cmd_write(args: argparse.Namespace) -> int:
 
                 if not interaction.confirmed:
                     if interaction.feedback:
-                        print(f"重写要求: {interaction.feedback}")
-                        # TODO: 实现重写逻辑
-                    print("已放弃此章节")
+                        print(f"  🔄 重写要求: {interaction.feedback}")
+                    print("  ⏭️ 已放弃此章节")
                     return 1
 
                 if interaction.modified:
                     result.content = interaction.content
 
                 content_len = len(result.content) if result.content else 0
+                title_display = result.chapter_title or "无题"
                 print(
-                    f"\n第 {chapter_num} 章「{result.chapter_title}」"
-                    f"完成 ({content_len} 字)"
+                    f"\n  ✅ 第 {chapter_num} 章"
+                    f"「{title_display}」({content_len} 字)"
                 )
 
                 if args.output:
                     with open(args.output, "w", encoding="utf-8") as f:
                         f.write(result.content or "")
-                    print(f"已保存到: {args.output}")
+                    print(f"  📄 已保存到: {args.output}")
             else:
-                print(f"写作失败: {result.error}")
+                print(f"❌ 写作失败: {result.error}")
                 return 1
 
         generator.save_checkpoint()
 
     except Exception as e:
-        print(f"错误: {e}")
+        print(f"❌ 错误: {e}")
         return 1
     finally:
         await generator.close()
@@ -457,26 +470,29 @@ async def cmd_list(args: argparse.Namespace) -> int:
         chapters = state_manager.list_chapters(args.title)
 
         if not chapters:
-            print(f"小说《{args.title}》暂无完成章节")
+            print(f"📚 小说《{args.title}》暂无完成章节")
             return 0
 
-        print(f"《{args.title}》已完成章节:\n")
+        print(f"\n📚 《{args.title}》已完成章节:\n")
         for ch in chapters:
-            print(f"  第 {ch['chapter_num']} 章: {ch['title']} ({ch['word_count']} 字)")
+            title = ch.get("title", "无题")
+            print(f"  📖 第 {ch['chapter_num']} 章: {title} ({ch['word_count']} 字)")
+        print()
     else:
         # 列出小说
         novels = state_manager.list_novels()
 
         if not novels:
-            print("暂无小说")
+            print("📚 暂无小说")
             return 0
 
-        print("已创建的小说:\n")
+        print("\n📚 已创建的小说:\n")
         for novel in novels:
             print(
-                f"  《{novel['title']}》 - {novel['chapter_count']} 章 "
+                f"  📖 《{novel['title']}》 - {novel['chapter_count']} 章 "
                 f"({novel['total_words']} 字)"
             )
+        print()
 
     return 0
 
@@ -493,20 +509,89 @@ async def cmd_status(args: argparse.Namespace) -> int:
         print(f"未找到小说: {args.title}")
         return 1
 
-    print(f"\n《{snapshot.title}》状态报告\n")
-    print(f"ID: {snapshot.id}")
-    print(f"创建时间: {snapshot.created_at}")
-    print(f"更新时间: {snapshot.updated_at}")
-    print(f"阶段: {snapshot.progress.current_phase.value}")
+    # 基础信息
+    print(f"\n{'═' * 50}")
+    print(f"  《{snapshot.title}》")
+    print(f"{'═' * 50}")
+    print(f"  ID: {snapshot.id}")
+    print(f"  创建: {snapshot.created_at[:10] if snapshot.created_at else '未知'}")
+    print(f"  更新: {snapshot.updated_at[:10] if snapshot.updated_at else '未知'}")
+    print(f"  阶段: {snapshot.progress.current_phase.value}")
     print(
-        f"进度: {snapshot.progress.current_chapter}/"
+        f"  进度: {snapshot.progress.current_chapter}/"
         f"{snapshot.progress.total_chapters} 章"
     )
-    print(f"已完成章节: {len(snapshot.progress.completed_chapters)} 章")
 
+    # 已完成章节
     if snapshot.progress.completed_chapters:
-        completed = ", ".join(map(str, sorted(snapshot.progress.completed_chapters)))
-        print(f"\n已完成: {completed} 章")
+        completed = sorted(snapshot.progress.completed_chapters)
+        print(f"  完成: {len(completed)} 章")
+        if len(completed) <= 10:
+            print(f"        {', '.join(map(str, completed))}")
+        else:
+            first_five = ', '.join(map(str, completed[:5]))
+            last_three = ', '.join(map(str, completed[-3:]))
+            print(f"        {first_five} ... {last_three}")
+
+    # 设计蓝图
+    if snapshot.global_summary:
+        print(f"\n{'─' * 50}")
+        print("  📋 设计蓝图")
+        print(f"{'─' * 50}")
+        summary = snapshot.global_summary
+
+        if args.full:
+            # 显示完整蓝图
+            for line in summary.split("\n"):
+                print(f"  {line}")
+        else:
+            # 显示摘要
+            if len(summary) > 800:
+                lines = summary.split("\n")
+                key_lines = []
+                capture = True
+                for line in lines[:50]:
+                    if "【blueprint】" in line:
+                        capture = False
+                        key_lines.append("  ... (章节蓝图已省略，使用 --full 查看)")
+                        break
+                    if capture and line.strip():
+                        key_lines.append(f"  {line}")
+                print("\n".join(key_lines[:20]))
+                print("\n  💡 使用 --full 查看完整设计")
+            else:
+                for line in summary.split("\n")[:30]:
+                    print(f"  {line}")
+
+    # 时间轴摘要
+    if snapshot.timeline_data and snapshot.timeline_data.get("points"):
+        print(f"\n{'─' * 50}")
+        print("  ⏱️ 时间轴")
+        print(f"{'─' * 50}")
+        points = snapshot.timeline_data.get("points", {})
+        point_count = len(points)
+        print(f"  已记录 {point_count} 个时间点")
+        if point_count <= 5:
+            for pid, p in list(points.items())[:5]:
+                print(f"  • {p.get('label', pid)}")
+
+    # 角色摘要
+    if snapshot.characters_data:
+        print(f"\n{'─' * 50}")
+        print("  👥 角色")
+        print(f"{'─' * 50}")
+        char_count = len(snapshot.characters_data)
+        print(f"  已设定 {char_count} 个角色")
+        if char_count <= 6:
+            for cid, char in snapshot.characters_data.items():
+                name = char.get("name", cid)
+                role = char.get("attrs", {}).get("role", "")
+                if role:
+                    print(f"  • {name} ({role})")
+                else:
+                    print(f"  • {name}")
+
+    print(f"\n{'═' * 50}\n")
 
     return 0
 
@@ -637,6 +722,9 @@ def main() -> int:
     # status 命令
     status_parser = subparsers.add_parser("status", help="查看小说状态")
     status_parser.add_argument("title", help="小说标题")
+    status_parser.add_argument(
+        "--full", "-f", action="store_true", help="显示完整设计蓝图"
+    )
     status_parser.add_argument("--save-dir", help="保存目录")
 
     # export 命令
