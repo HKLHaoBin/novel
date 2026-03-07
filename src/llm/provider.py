@@ -283,9 +283,24 @@ class ToolCallLoop:
                 # 继续循环让 LLM 处理工具结果
                 continue
 
-            # 没有工具调用，返回最终内容
-            final_content = response.text
-            break
+            # 没有工具调用
+            # 重要：必须通过 complete() 提交，不能直接返回 response.text
+            # 因为 response.text 可能是中间对话内容，而不是最终正文
+            if response.text and response.text.strip():
+                # LLM 返回了文本但没有调用 complete
+                # 要求它使用 complete 提交
+                messages.append(
+                    Message.user(
+                        "请使用 complete(content) 工具提交你的写作内容。"
+                        "不要直接输出文本，必须调用 complete 工具！"
+                    )
+                )
+                continue
+
+            # 完全没有响应，继续循环
+            messages.append(
+                Message.user("请继续工作，完成写作后调用 complete(content) 提交。")
+            )
 
         if iteration >= self.max_iterations:
             # 达到最大迭代次数，要求 LLM 直接提交
