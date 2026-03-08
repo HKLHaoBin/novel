@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime
 from pathlib import Path
@@ -22,6 +23,11 @@ from pydantic import BaseModel
 from src.core import NovelCoordinator, NovelStateManager
 from src.core.live import LiveStateStore
 from src.generator import NovelGenerator
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s %(message)s",
+)
 
 
 class WebSettings(BaseModel):

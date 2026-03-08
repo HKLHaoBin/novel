@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger("novel.live")
 
 
 def _now() -> str:
@@ -128,6 +131,7 @@ class LiveStateStore:
                 "running": state["status"]["running"],
             },
         )
+        logger.info("[LIVE][%s] progress stage=%s message=%s", self.title, stage, message)
 
     def publish_snapshot(self, novel_ctx: Any) -> None:
         snapshot = novel_ctx.snapshot
@@ -177,6 +181,7 @@ class LiveStateStore:
                 "meta": meta or {},
             },
         )
+        logger.info("[LIVE][%s] agent_started name=%s meta=%s", self.title, agent_name, meta or {})
 
     def publish_agent_result(
         self,
@@ -210,6 +215,13 @@ class LiveStateStore:
                 "error": error,
                 "meta": meta or {},
             },
+        )
+        logger.info(
+            "[LIVE][%s] agent_finished name=%s status=%s error=%s",
+            self.title,
+            agent_name,
+            status,
+            error[:200],
         )
 
     def _build_sections(self, novel_ctx: Any) -> dict[str, str]:

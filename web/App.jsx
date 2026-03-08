@@ -164,6 +164,7 @@ export default function App() {
   const [startingJob, setStartingJob] = useState(false);
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
+  const prevLiveRef = useRef(null);
   const touchRef = useRef({
     startDist: 0,
     startZoom: 1,
@@ -293,6 +294,39 @@ export default function App() {
     return () => document.removeEventListener('mousedown', preventMiddleScroll);
   }, []);
 
+  useEffect(() => {
+    if (!liveState) return;
+    const prev = prevLiveRef.current;
+    const title = liveState.title || selectedTitle || settings.title || 'unknown';
+
+    if (!prev || prev.event_seq !== liveState.event_seq) {
+      console.info('[NOVEL_LIVE] state', {
+        title,
+        eventSeq: liveState.event_seq,
+        status: liveState.status,
+        overview: liveState.overview,
+      });
+    }
+
+    const agents = liveState.agents || {};
+    Object.entries(agents).forEach(([name, agent]) => {
+      const prevAgent = prev?.agents?.[name];
+      if (!prevAgent || prevAgent.status !== agent.status || prevAgent.updated_at !== agent.updated_at) {
+        console.info(`[NOVEL_LIVE][${name}]`, {
+          status: agent.status,
+          updatedAt: agent.updated_at,
+          meta: agent.meta,
+          context: agent.context,
+          prompt: agent.prompt,
+          output: agent.output,
+          error: agent.error,
+        });
+      }
+    });
+
+    prevLiveRef.current = liveState;
+  }, [liveState, selectedTitle, settings.title]);
+
   const handleWheel = (e) => {
     if (maximizedKey) return;
     e.preventDefault();
@@ -345,7 +379,6 @@ export default function App() {
     const touches = e.touches;
 
     if (touches.length === 2) {
-      e.preventDefault();
       const dist = getTouchDistance(touches);
       const center = getTouchCenter(touches);
       touchRef.current = {
@@ -370,7 +403,6 @@ export default function App() {
     const touches = e.touches;
 
     if (touches.length === 2 && touchRef.current.startDist) {
-      e.preventDefault();
       const dist = getTouchDistance(touches);
       const center = getTouchCenter(touches);
       const scale = dist / touchRef.current.startDist;
@@ -805,7 +837,13 @@ export default function App() {
               onClick={() => setSettingsOpen(false)}
             />
             <aside className="absolute top-0 right-0 z-[190] h-full w-full max-w-xl border-l border-slate-800 bg-slate-900/95 shadow-2xl">
-              <div className="flex h-full flex-col">
+              <form
+                className="flex h-full flex-col"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  startJob();
+                }}
+              >
                 <div className="flex items-center justify-between border-b border-slate-800 px-5 py-4">
                   <div>
                     <h2 className="text-lg font-bold text-white">运行设置</h2>
@@ -952,6 +990,7 @@ export default function App() {
 
                 <div className="border-t border-slate-800 px-5 py-4 flex items-center justify-between gap-3">
                   <button
+                    type="button"
                     onClick={saveSettings}
                     disabled={savingSettings}
                     className="flex items-center gap-2 rounded-xl border border-slate-700 bg-slate-800 px-4 py-2 text-sm font-bold text-slate-200 transition hover:bg-slate-700 disabled:opacity-60"
@@ -960,7 +999,7 @@ export default function App() {
                     保存设置
                   </button>
                   <button
-                    onClick={startJob}
+                    type="submit"
                     disabled={startingJob || job?.running}
                     className="flex items-center gap-2 rounded-xl bg-blue-500 px-4 py-2 text-sm font-bold text-white transition hover:bg-blue-400 disabled:opacity-60"
                   >
@@ -968,7 +1007,7 @@ export default function App() {
                     启动生成
                   </button>
                 </div>
-              </div>
+              </form>
             </aside>
           </>
         )}
