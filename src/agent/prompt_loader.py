@@ -80,7 +80,7 @@ def get_agent_info(prompt_name: str) -> dict[str, str]:
 
 
 # 预定义的提示词名称
-PROMPT_NAMES = ["designer", "writer", "auditor", "polisher"]
+PROMPT_NAMES = ["designer", "planner", "writer", "auditor", "polisher"]
 
 
 def list_available_prompts() -> list[str]:

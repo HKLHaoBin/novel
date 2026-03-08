@@ -299,6 +299,37 @@ async def cmd_design(args: argparse.Namespace) -> int:
             console.print(f"[red]错误: 未找到小说 '{args.title}'[/red]")
             return 1
 
+        # 从现有内容构建设计（保留现有设计作为参考）
+        existing_content = None
+        existing_design = None
+        if getattr(args, "from_content", False):
+            completed = novel_ctx.snapshot.progress.completed_chapters
+            if not completed:
+                console.print("[yellow]该小说没有已完成的章节，无法从内容构建设计[/yellow]")
+                return 1
+            
+            # 读取现有设计（作为参考，不清除）
+            if novel_ctx.global_summary:
+                existing_design = novel_ctx.global_summary
+                console.print("[cyan]将参考现有设计主线...[/cyan]")
+            
+            # 读取已完成章节
+            console.print(f"[cyan]正在读取 {len(completed)} 个已完成章节...[/cyan]")
+            chapters_content = {}
+            for ch_num in sorted(completed):
+                content = generator.coordinator.state_manager.load_chapter(
+                    args.title, ch_num
+                )
+                if content:
+                    chapters_content[ch_num] = content
+            
+            if chapters_content:
+                existing_content = chapters_content
+                console.print(f"[cyan]将结合现有设计和 {len(chapters_content)} 章内容重构更完整的设计...[/cyan]")
+                # 清除旧设计，准备生成新设计
+                novel_ctx.snapshot.global_summary = ""
+                novel_ctx.global_summary = ""
+
         if args.force:
             novel_ctx.snapshot.global_summary = ""
             novel_ctx.global_summary = ""
@@ -332,7 +363,10 @@ async def cmd_design(args: argparse.Namespace) -> int:
         with console.status(
             f"[bold blue]🎨 正在为《{args.title}》进行架构设计...[/bold blue]"
         ):
-            result = await generator.design()
+            result = await generator.design(
+                existing_content=existing_content,
+                existing_design=existing_design,
+            )
 
         if result.success:
             console.print(
@@ -413,12 +447,21 @@ async def cmd_write(args: argparse.Namespace) -> int:
         total = novel_ctx.snapshot.progress.total_chapters
 
         if args.all:
-            # 优先使用 completed_chapters 计算，更稳健
-            completed = novel_ctx.snapshot.progress.completed_chapters
-            if completed:
-                start = max(completed) + 1
-            else:
-                start = novel_ctx.snapshot.progress.current_chapter + 1
+            # 扫描 drafts/*.novel 检查点文件，找到最大章节号
+            import re
+            from pathlib import Path
+
+            novel_dir = Path("novels") / args.title / "drafts"
+            max_chapter = 0
+            if novel_dir.exists():
+                for f in novel_dir.iterdir():
+                    if f.is_file() and f.suffix == ".novel":
+                        match = re.search(r"第(\d+)章", f.name)
+                        if match:
+                            chapter_num = int(match.group(1))
+                            max_chapter = max(max_chapter, chapter_num)
+
+            start = max_chapter + 1
             if start > total:
                 console.print("[green]✅ 所有章节已完成![/green]")
                 return 0
@@ -844,6 +887,10 @@ def main() -> int:
     )
     design_parser.add_argument(
         "--force", "-f", action="store_true", help="强制重新设计，清除旧设计"
+    )
+    design_parser.add_argument(
+        "--from-content", action="store_true",
+        help="从现有章节正文反向构建设计（适用于旧版小说）"
     )
     design_parser.add_argument("--save-dir", help="保存目录")
 

@@ -104,6 +104,7 @@ class ToolCallLoop:
         context: Any,
         max_iterations: int = 10,
         on_tool_call: Callable[[str, dict], None] | None = None,
+        mode: str = "write",  # "write" 或 "design"
     ):
         """
         初始化工具调用循环
@@ -113,12 +114,14 @@ class ToolCallLoop:
             context: 传递给工具的上下文
             max_iterations: 最大迭代次数
             on_tool_call: 工具调用回调
+            mode: 模式（write 或 design）
         """
         self.tools = tools
         self.context = context
         self.max_iterations = max_iterations
         self.on_tool_call = on_tool_call
         self.final_content: str | None = None
+        self.mode = mode
 
     async def execute_tool(self, name: str, arguments: dict) -> ToolResult:
         """执行单个工具"""
@@ -286,23 +289,42 @@ class ToolCallLoop:
                 continue
 
             # 没有工具调用
-            # 重要：必须通过 complete() 提交，不能直接返回 response.text
-            # 因为 response.text 可能是中间对话内容，而不是最终正文
+            # 重要：必须通过工具提交，不能直接返回 response.text
             if response.text and response.text.strip():
-                # LLM 返回了文本但没有调用 complete
-                # 要求它使用 complete 提交
-                messages.append(
-                    Message.user(
-                        "请使用 complete(content) 工具提交你的写作内容。"
-                        "不要直接输出文本，必须调用 complete 工具！"
+                # 根据模式给出不同提示
+                if self.mode == "design" or "complete_design" in self.tools:
+                    # 设计模式
+                    messages.append(
+                        Message.user(
+                            "⚠️ 你必须使用工具来构建设计！\n"
+                            "可用的设计工具：\n"
+                            "- set_seed(core, conflict, theme, tone) - 设置故事核心\n"
+                            "- add_character(name, role, appearances, ...) - 添加角色\n"
+                            "- add_location(name, loc_type, chapters, ...) - 添加地点\n"
+                            "- add_chapter(chapter_num, title, characters, locations, ...) - 添加章节\n"
+                            "- complete_design(summary) - 完成设计\n\n"
+                            "不要只输出文字描述！必须调用工具来存储设计数据！"
+                        )
                     )
-                )
+                else:
+                    # 写作模式
+                    messages.append(
+                        Message.user(
+                            "请使用 complete(content) 工具提交你的写作内容。"
+                            "不要直接输出文本，必须调用 complete 工具！"
+                        )
+                    )
                 continue
 
             # 完全没有响应，继续循环
-            messages.append(
-                Message.user("请继续工作，完成写作后调用 complete(content) 提交。")
-            )
+            if self.mode == "design" or "complete_design" in self.tools:
+                messages.append(
+                    Message.user("请调用设计工具构建设计，完成后调用 complete_design() 提交。")
+                )
+            else:
+                messages.append(
+                    Message.user("请继续工作，完成写作后调用 complete(content) 提交。")
+                )
 
         if iteration >= self.max_iterations:
             # 达到最大迭代次数，要求 LLM 直接提交

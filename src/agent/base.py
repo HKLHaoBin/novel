@@ -75,6 +75,9 @@ class AgentResult:
     issues: list[dict] = field(default_factory=list)
     suggestions: list[str] = field(default_factory=list)
 
+    # 额外信息
+    extra: dict[str, Any] = field(default_factory=dict)
+
     # 错误信息
     error: str = ""
 

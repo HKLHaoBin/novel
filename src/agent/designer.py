@@ -78,6 +78,7 @@ class Designer(BaseAgent):
                 - user_input: 用户需求描述
                 - extra.get("total_chapters"): 总章节数
                 - extra.get("word_count_per_chapter"): 每章字数
+                - extra.get("existing_content"): 现有章节内容（用于反向构建设计）
 
         Returns:
             设计结果
@@ -91,10 +92,16 @@ class Designer(BaseAgent):
                 error="缺少用户需求描述",
             )
 
+        # 检查是否是从现有内容构建设计
+        existing_content = context.extra.get("existing_content")
+        existing_design = context.extra.get("existing_design")
+        if existing_content:
+            return await self._design_from_content(context, existing_content, existing_design)
+
         # 检查是否是扩展设计任务
         user_guidance = context.extra.get("user_guidance", "")
-        existing_design = context.extra.get("global_summary", "")
-        is_expand_task = "扩展任务" in user_guidance and existing_design
+        global_summary = context.extra.get("global_summary", "")
+        is_expand_task = "扩展任务" in user_guidance and global_summary
 
         if is_expand_task:
             return await self._expand_design(context, existing_design, user_guidance)
@@ -149,6 +156,7 @@ class Designer(BaseAgent):
             tools=tools,  # type: ignore[arg-type]
             context=context,
             max_iterations=50,  # 设计可能需要更多迭代
+            mode="design",  # 设计模式
         )
 
         # 执行工具调用
@@ -159,18 +167,19 @@ class Designer(BaseAgent):
             user_prompt=user_prompt,
         )
 
-        # 检查是否有结构化工具调用数据
-        has_structured_data = bool(
-            context.extra.get("seed")
-            or context.extra.get("blueprint")
-            or context.characters
-        )
+        # 检查是否有结构化工具调用数据 - 没有就是失败
+        has_seed = bool(context.extra.get("seed"))
+        has_blueprint = bool(context.extra.get("blueprint"))
+        has_characters = bool(context.characters)
 
-        # 如果没有结构化数据，尝试从 context.extra 生成设计摘要
-        if not final_content or not has_structured_data:
-            generated_summary = self._generate_summary_from_tools(context)
-            if generated_summary:
-                final_content = generated_summary
+        if not has_seed and not has_blueprint and not has_characters:
+            return AgentResult(
+                success=False,
+                error="设计失败：LLM 未调用任何设计工具，未产生结构化数据。请检查模型是否支持 function calling。",
+            )
+
+        # 从结构化数据生成设计摘要
+        final_content = self._generate_summary_from_tools(context)
 
         # 收集图结构数据
         nodes_to_add = []
@@ -218,33 +227,289 @@ class Designer(BaseAgent):
             if world.get("factions"):
                 lines.append(f"└── 势力: {world['factions']}")
 
-        # 角色
+        # 角色 - 详细版
         if context.characters:
             lines.append("\n【角色设定】")
-            for _char_id, char in context.characters.items():
+            chars_list = list(context.characters.items())
+            for i, (_char_id, char) in enumerate(chars_list):
+                is_last = (i == len(chars_list) - 1)
+                prefix = "└──" if is_last else "├──"
+                
                 role = char.attrs.get("role", "未知")
                 desc = char.attrs.get("description", "")
-                line = f"├── {char.name}（{role}）"
+                personality = char.attrs.get("personality", "")
+                background = char.attrs.get("background", "")
+                goals = char.attrs.get("goals", "")
+                appearances = char.attrs.get("appearances", [])
+                abilities = list(char.abilities.keys()) if char.abilities else []
+                dialogue_style = char.attrs.get("dialogue_style", "")
+                arc = char.attrs.get("arc", "")
+                
+                # 角色名和定位
+                lines.append(f"{prefix} {char.name}（{role}）")
+                
+                # 详细信息
+                sub_prefix = "    └──" if is_last else "│   └──"
+                sub_prefix_mid = "    ├──" if is_last else "│   ├──"
+                
                 if desc:
-                    line += f" - {desc[:30]}..."
-                lines.append(line)
+                    lines.append(f"{sub_prefix_mid} 简介: {desc}")
+                if personality:
+                    lines.append(f"{sub_prefix_mid} 性格: {personality}")
+                if background:
+                    lines.append(f"{sub_prefix_mid} 背景: {background}")
+                if goals:
+                    lines.append(f"{sub_prefix_mid} 目标: {goals}")
+                if appearances:
+                    if isinstance(appearances, list):
+                        lines.append(f"{sub_prefix_mid} 出场章节: {', '.join(map(str, appearances))}")
+                    else:
+                        lines.append(f"{sub_prefix_mid} 出场章节: {appearances}")
+                if abilities:
+                    lines.append(f"{sub_prefix_mid} 能力: {', '.join(abilities)}")
+                if dialogue_style:
+                    lines.append(f"{sub_prefix_mid} 对话风格: {dialogue_style}")
+                if arc:
+                    lines.append(f"{sub_prefix} 弧线: {arc}")
 
-        # 地点
+        # 角色关系网（关联章节和事件）
+        relations = context.extra.get("relations", [])
+        if relations:
+            lines.append("\n【角色关系演变】")
+            for i, rel in enumerate(relations):
+                is_last = (i == len(relations) - 1)
+                prefix = "└──" if is_last else "├──"
+                sub_prefix = "    └──" if is_last else "│   └──"
+                sub_prefix_mid = "    ├──" if is_last else "│   ├──"
+                
+                chapter_info = f"第{rel.get('chapter', '?')}章" if rel.get("chapter") else ""
+                lines.append(f"{prefix} {rel.get('char1', '')} ↔ {rel.get('char2', '')}（{rel.get('type', '未知')}）{chapter_info}")
+                if rel.get("event"):
+                    lines.append(f"{sub_prefix_mid} 触发事件: {rel['event']}")
+                if rel.get("change"):
+                    lines.append(f"{sub_prefix_mid} 变化: {rel['change']}")
+                if rel.get("description"):
+                    lines.append(f"{sub_prefix} 描述: {rel['description']}")
+
+        # 地点 - 详细版
         if context.world_map and context.world_map.locations:
             lines.append("\n【世界地图】")
-            for _loc_id, loc in context.world_map.locations.items():
-                lines.append(f"├── {loc.name}（{loc.type.value}）")
+            locs_list = list(context.world_map.locations.items())
+            for i, (_loc_id, loc) in enumerate(locs_list):
+                is_last = (i == len(locs_list) - 1)
+                prefix = "└──" if is_last else "├──"
+                
+                lines.append(f"{prefix} {loc.name}（{loc.type.value}）")
+                
+                sub_prefix = "    └──" if is_last else "│   └──"
+                sub_prefix_mid = "    ├──" if is_last else "│   ├──"
+                
+                if loc.description:
+                    lines.append(f"{sub_prefix_mid} 描述: {loc.description}")
+                
+                significance = loc.attrs.get("significance", "")
+                if significance:
+                    lines.append(f"{sub_prefix_mid} 剧情意义: {significance}")
+                
+                chapters = loc.attrs.get("chapters", [])
+                if chapters:
+                    if isinstance(chapters, list):
+                        lines.append(f"{sub_prefix} 涉及章节: {', '.join(map(str, chapters))}")
+                    else:
+                        lines.append(f"{sub_prefix} 涉及章节: {chapters}")
 
-        # 章节蓝图
+        # 章节蓝图 - 详细版
         blueprint = context.extra.get("blueprint", {})
         if blueprint:
             lines.append("\n【章节蓝图】")
-            for ch_num in sorted(blueprint.keys()):
+            ch_nums = sorted(blueprint.keys(), key=lambda x: int(x) if str(x).isdigit() else 0)
+            for i, ch_num in enumerate(ch_nums):
+                is_last = (i == len(ch_nums) - 1)
+                prefix = "└──" if is_last else "├──"
+                
                 ch = blueprint[ch_num]
-                lines.append(f"├── 第{ch_num}章「{ch.get('title', '未命名')}」")
+                lines.append(f"{prefix} 第{ch_num}章「{ch.get('title', '未命名')}」")
+                
+                sub_prefix = "    └──" if is_last else "│   └──"
+                sub_prefix_mid = "    ├──" if is_last else "│   ├──"
+                
+                if ch.get("summary"):
+                    lines.append(f"{sub_prefix_mid} 摘要: {ch['summary']}")
+                if ch.get("pov"):
+                    lines.append(f"{sub_prefix_mid} 视角: {ch['pov']}")
+                
+                # 出场角色
+                chars = ch.get("characters", [])
+                if chars:
+                    if isinstance(chars, list):
+                        lines.append(f"{sub_prefix_mid} 出场角色: {', '.join(chars)}")
+                    else:
+                        lines.append(f"{sub_prefix_mid} 出场角色: {chars}")
+                
+                # 涉及地点
+                locs = ch.get("locations", [])
+                if locs:
+                    if isinstance(locs, list):
+                        lines.append(f"{sub_prefix_mid} 涉及地点: {', '.join(locs)}")
+                    else:
+                        lines.append(f"{sub_prefix_mid} 涉及地点: {locs}")
+                
+                if ch.get("key_events"):
+                    lines.append(f"{sub_prefix_mid} 关键事件: {ch['key_events']}")
+                
+                if ch.get("emotional_arc"):
+                    lines.append(f"{sub_prefix_mid} 情感弧线: {ch['emotional_arc']}")
+                
+                # 场景列表
+                scenes = ch.get("scenes", [])
+                if scenes:
+                    if isinstance(scenes, list):
+                        lines.append(f"{sub_prefix_mid} 场景: {', '.join(scenes)}")
+                    else:
+                        lines.append(f"{sub_prefix_mid} 场景: {scenes}")
+                
+                # 冲突点
+                conflicts = ch.get("conflicts", [])
+                if conflicts:
+                    if isinstance(conflicts, list):
+                        lines.append(f"{sub_prefix_mid} 冲突: {', '.join(conflicts)}")
+                    else:
+                        lines.append(f"{sub_prefix_mid} 冲突: {conflicts}")
+                
+                # 伏笔
+                foreshadows = ch.get("foreshadows", [])
+                if foreshadows:
+                    if isinstance(foreshadows, list):
+                        lines.append(f"{sub_prefix} 伏笔: {', '.join(foreshadows)}")
+                    else:
+                        lines.append(f"{sub_prefix} 伏笔: {foreshadows}")
 
         lines.append("\n═══════════════════════════════════════")
         return "\n".join(lines)
+
+    async def _design_from_content(
+        self, context: AgentContext, existing_content: dict[int, str], existing_design: str | None = None
+    ) -> AgentResult:
+        """
+        从现有章节内容反向构建设计（保留现有设计主线）
+
+        Args:
+            context: Agent 上下文
+            existing_content: 现有章节内容 {章节号: 内容}
+            existing_design: 现有设计大纲（作为参考主线）
+
+        Returns:
+            设计结果
+        """
+        # 1. 合并现有章节内容
+        content_summary = []
+        for ch_num in sorted(existing_content.keys()):
+            content = existing_content[ch_num]
+            # 截取前2000字以避免太长
+            preview = content[:2000] if len(content) > 2000 else content
+            content_summary.append(f"【第{ch_num}章】\n{preview}...")
+        
+        combined_content = "\n\n".join(content_summary)
+        
+        # 2. 构建分析提示
+        total_chapters = context.extra.get("total_chapters", 20)
+        word_count = context.extra.get("word_count_per_chapter", 3000)
+        user_input = context.user_input or "从现有内容反向构建设计"
+        
+        # 3. 获取设计工具
+        tools = get_all_tools(mode="design")
+
+        # 4. 构建用户提示
+        design_ref = ""
+        if existing_design:
+            design_ref = f"""
+【现有设计大纲（必须保留主线！）】
+{existing_design}
+"""
+
+        user_prompt = f"""请根据以下内容，构建更完整的小说设计：
+
+【小说标题】
+{context.extra.get("novel_title", "未知")}
+
+【用户需求】
+{user_input}
+{design_ref}
+【已完成的章节内容】
+{combined_content}
+
+【约束条件】
+- 已完成章节：{len(existing_content)}章
+- 总章节：{total_chapters}章
+- 每章字数：约{word_count}字
+
+【设计要求】
+1. {"必须保留现有设计的主线和核心设定！" if existing_design else "分析现有章节，推断故事主线"}
+2. 调用 set_seed 设置故事核心
+3. 调用 add_character 添加角色（从内容中提取，补全对话风格和角色弧线）
+4. 调用 add_location 添加地点
+5. 调用 add_event 添加关键事件
+6. 调用 add_relation 添加角色关系（标注章节节点和变化）
+7. 调用 add_chapter 为每章添加详细大纲（场景、冲突、伏笔）
+8. 最后调用 complete_design 完成设计
+
+请开始设计！"""
+
+        # 5. 创建工具调用循环
+        loop = ToolCallLoop(
+            tools=tools,  # type: ignore[arg-type]
+            context=context,
+            max_iterations=60,  # 可能需要更多迭代
+            mode="design",
+        )
+
+        # 6. 执行工具调用循环
+        result = await loop.run(
+            system_prompt=None,
+            user_prompt=user_prompt,
+        )
+
+        # 7. 检查是否有错误
+        if result.get("errors"):
+            errors = result["errors"]
+            return AgentResult(
+                success=False,
+                error=f"设计过程中出现错误: {'; '.join(errors)}",
+            )
+
+        # 8. 检查是否调用了工具
+        tool_calls = result.get("tool_calls", [])
+        if not tool_calls:
+            return AgentResult(
+                success=False,
+                error="设计失败：没有调用任何工具，请检查模型是否支持工具调用",
+            )
+
+        # 9. 生成设计摘要
+        summary = self._generate_summary_from_tools(context, tool_calls)
+
+        # 10. 收集图结构数据
+        nodes = []
+        edges = []
+        timepoints = []
+
+        for call in tool_calls:
+            if call.get("result") and call["result"].data:
+                data = call["result"].data
+                if data.get("nodes"):
+                    nodes.extend(data["nodes"])
+                if data.get("edges"):
+                    edges.extend(data["edges"])
+                if data.get("timepoints"):
+                    timepoints.extend(data["timepoints"])
+
+        return AgentResult(
+            success=True,
+            content=summary,
+            nodes_to_add=nodes,
+            edges_to_add=edges,
+            timepoints_to_add=timepoints,
+        )
 
     async def _expand_design(
         self, context: AgentContext, existing_design: str, user_guidance: str

@@ -1,11 +1,11 @@
 """文笔优化师 Agent - 负责文字润色
 
-五个润色维度：
-1. 流畅性 - 句子是否通顺
-2. 生动性 - 描写是否生动
-3. 感染力 - 情感是否打动人
-4. 文学性 - 是否有文采
-5. 节奏感 - 张弛是否合理
+润色原则：最小化改动，保持原意和风格
+1. 删除多余虚词 - 的、了、着、呢、嘛
+2. 修正明显语病 - 病句、错字
+3. 优化节奏 - 避免连续长句/短句
+4. 减少重复用词 - 同一段落重复词汇
+5. 保持字数 - 润色后字数不能少于原文
 """
 
 from .base import AgentContext, AgentResult, BaseAgent
@@ -39,8 +39,8 @@ class Polisher(BaseAgent):
         Args:
             context: 执行上下文，需要包含:
                 - user_input: 待润色的内容
-                - extra.get("polish_level"): 润色强度 (light/medium/deep)
-                - extra.get("focus"): 润色重点 (flow/vivid/emotion/literary/rhythm/all)
+                - extra.get("min_word_count"): 最小字数（默认原文字数）
+                - extra.get("style"): 风格参考（可选）
 
         Returns:
             润色结果
@@ -54,15 +54,38 @@ class Polisher(BaseAgent):
                 error="缺少待润色的内容",
             )
 
-        polish_level = context.extra.get("polish_level", "medium")
-        focus = context.extra.get("focus", "all")
+        original_word_count = len(content)
+        min_word_count = context.extra.get("min_word_count", original_word_count)
 
         try:
-            polished = await self._polish(content, polish_level, focus)
+            polished = await self._polish(content, min_word_count)
+
+            # 验证字数
+            polished_count = len(polished)
+            if polished_count < min_word_count:
+                # 字数不足，返回原文
+                return AgentResult(
+                    success=True,
+                    content=content,
+                    extra={
+                        "original_count": original_word_count,
+                        "polished_count": polished_count,
+                        "min_count": min_word_count,
+                        "fallback": True,
+                        "reason": (
+                            f"润色后字数{polished_count}"
+                            f"不足目标{min_word_count}，使用原文"
+                        ),
+                    },
+                )
 
             return AgentResult(
                 success=True,
                 content=polished,
+                extra={
+                    "original_count": original_word_count,
+                    "polished_count": polished_count,
+                },
             )
 
         except Exception as e:
@@ -71,97 +94,66 @@ class Polisher(BaseAgent):
                 error=f"润色过程出错: {e!s}",
             )
 
-    async def _polish(
-        self, content: str, level: str = "medium", focus: str = "all"
-    ) -> str:
-        """执行润色"""
+    async def _polish(self, content: str, min_word_count: int) -> str:
+        """
+        执行润色 - 最小化改动原则
 
-        level_descriptions = {
-            "light": "轻微润色：保持原文风格，仅修正明显问题，改动<10%",
-            "medium": "中等润色：优化表达，提升整体质量，改动10-30%",
-            "deep": "深度润色：大幅改写，追求文学效果，改动30-50%",
-        }
+        Args:
+            content: 原文
+            min_word_count: 最小字数
 
-        focus_descriptions = {
-            "flow": "流畅性：句子通顺、衔接自然、节奏舒适",
-            "vivid": "生动性：感官描写、具体细节、画面感",
-            "emotion": "感染力：情感真挚、代入感强、共鸣触发",
-            "literary": "文学性：用词精准、修辞恰当、诗意瞬间",
-            "rhythm": "节奏感：长短变化、张弛有度、呼吸感",
-            "all": "全面润色：流畅性、生动性、感染力、文学性、节奏感",
-        }
-
-        level_desc = level_descriptions.get(level, level_descriptions["medium"])
-        focus_desc = focus_descriptions.get(focus, focus_descriptions["all"])
-
+        Returns:
+            润色后的内容
+        """
         prompt = f"""请对以下内容进行润色。
 
 【原文】
 {content}
 
-【润色强度】
-{level_desc}
+【原文字数】
+{len(content)}字
 
-【润色重点】
-{focus_desc}
+【最小字数要求】
+{min_word_count}字（润色后不能少于此字数）
 
-【润色原则】
-1. 保持原意：不改变情节和人物行为
-2. 保持风格：不改变作者的写作风格
-3. 保持节奏：不改变故事的节奏感
-4. 自然无痕：润色后要自然，看不出痕迹
-
-【润色要点】
-- 流畅性：修正病句、优化衔接、消除冗余
-- 生动性：增加细节、强化感官、使用比喻
-- 感染力：深化情感、增强张力、引发共鸣
-- 文学性：优化措辞、恰当修辞、提升文采
-- 节奏感：调整句式、控制速度、张弛有度
+【润色原则 - 最小化改动】
+1. 删除多余虚词：删减不必要的"的""了""着""呢""嘛"
+2. 修正明显语病：病句、错字、标点错误
+3. 优化节奏：避免连续长句或短句，调整句式变化
+4. 减少重复：同一段落内重复用词替换为同义词
+5. 保持字数：润色后字数不能少于原文
 
 【禁止事项】
-- ❌ 改变情节走向
-- ❌ 改变角色性格
-- ❌ 过度润色导致堆砌
-- ❌ 强加自己的风格
+- ❌ 大幅改写句子结构
+- ❌ 改变原文意思
+- ❌ 删减有效内容
+- ❌ 添加原文没有的内容
+- ❌ 改变作者的写作风格
+- ❌ 追求"文学性"而过度润色
+
+【润色示例】
+原文：他轻轻地推开了那扇古老的门，门发出了吱呀的声音。
+润色：他轻推古门，吱呀一声。
+（删除多余的"地""了""那扇""的"，优化节奏）
+
+原文：她感到很开心很高兴很快乐。
+润色：她感到开心愉悦。
+（减少重复，删除多余程度词）
 
 【输出要求】
 - 直接输出润色后的内容
 - 不要任何解释或说明
-- 不要使用markdown格式
-- 保持原文的段落结构
-- 字数与原文相近"""
+- 不要markdown格式
+- 保持原文段落结构
+- 字数≥{min_word_count}字"""
 
         result = await self._call_llm(
             prompt,
             system=self._system_prompt,
-            max_tokens=len(content) + 1000,
+            max_tokens=len(content) + 500,
         )
 
         return result
-
-    async def polish_with_comparison(
-        self,
-        content: str,
-        level: str = "medium",
-    ) -> dict:
-        """
-        润色并返回对比
-
-        Args:
-            content: 原文
-            level: 润色强度
-
-        Returns:
-            包含原文、润色后、改动的字典
-        """
-        polished = await self._polish(content, level)
-
-        return {
-            "original": content,
-            "polished": polished,
-            "word_count_original": len(content),
-            "word_count_polished": len(polished),
-        }
 
     def get_system_prompt(self) -> str:
         """获取系统提示词"""
@@ -169,18 +161,21 @@ class Polisher(BaseAgent):
 
 
 # 便捷方法
-async def quick_polish(llm, content: str, level: str = "medium") -> str:
+async def quick_polish(llm, content: str, min_word_count: int = 0) -> str:
     """
     快速润色
 
     Args:
         llm: LLM 提供者
         content: 待润色内容
-        level: 润色强度
+        min_word_count: 最小字数（默认原文字数）
 
     Returns:
         润色后的内容
     """
+    if min_word_count == 0:
+        min_word_count = len(content)
+
     polisher = Polisher(llm=llm)
     result = await polisher.execute(
         AgentContext(
@@ -189,7 +184,7 @@ async def quick_polish(llm, content: str, level: str = "medium") -> str:
             world_map=None,
             characters={},
             user_input=content,
-            extra={"polish_level": level},
+            extra={"min_word_count": min_word_count},
         )
     )
     return result.content if result.success else content

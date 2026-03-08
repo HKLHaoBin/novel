@@ -1074,6 +1074,45 @@ def suggest_next(context: Any, current_situation: str = "") -> ToolResult:
 # =============== 设计工具 ===============
 
 
+def parse_chapter_range(chapter_str: str) -> list[int]:
+    """
+    解析章节范围字符串
+
+    支持格式:
+    - "1,3,5" -> [1, 3, 5]
+    - "1-5" -> [1, 2, 3, 4, 5]
+    - "1,3-5,8" -> [1, 3, 4, 5, 8]
+
+    Args:
+        chapter_str: 章节范围字符串
+
+    Returns:
+        章节号列表
+    """
+    chapters = []
+    parts = [p.strip() for p in chapter_str.split(",") if p.strip()]
+
+    for part in parts:
+        if "-" in part:
+            # 范围格式: 1-5
+            start_end = part.split("-")
+            if len(start_end) == 2:
+                try:
+                    start = int(start_end[0].strip())
+                    end = int(start_end[1].strip())
+                    chapters.extend(range(start, end + 1))
+                except ValueError:
+                    pass
+        else:
+            # 单个章节
+            try:
+                chapters.append(int(part))
+            except ValueError:
+                pass
+
+    return sorted(set(chapters))
+
+
 def design_add_character(
     context: Any,
     name: str,
@@ -1081,6 +1120,11 @@ def design_add_character(
     description: str = "",
     personality: str = "",
     background: str = "",
+    appearances: str = "",
+    goals: str = "",
+    abilities: str = "",
+    dialogue_style: str = "",
+    arc: str = "",
 ) -> ToolResult:
     """
     添加角色到设计中
@@ -1092,8 +1136,13 @@ def design_add_character(
         description: 角色简介
         personality: 性格特点
         background: 背景故事
+        appearances: 出场章节（逗号分隔，如 "1,3,5-8"）
+        goals: 角色目标
+        abilities: 角色能力（逗号分隔）
+        dialogue_style: 对话风格（说话特点、口头禅）
+        arc: 角色弧线（成长变化路径）
     """
-    from src.core.character import CharacterCard
+    from src.core.character import CharacterCard, Ability
 
     # 确保 characters 存在（不创建新 dict，保持引用）
     if context.characters is None:
@@ -1117,13 +1166,32 @@ def design_add_character(
             "description": description,
             "personality": personality,
             "background": background,
+            "goals": goals,
+            "dialogue_style": dialogue_style,
+            "arc": arc,
         },
     )
+
+    # 解析出场章节
+    if appearances:
+        chapters = parse_chapter_range(appearances)
+        char.attrs["appearances"] = chapters
+
+    # 解析能力
+    if abilities:
+        ability_list = [a.strip() for a in abilities.split(",") if a.strip()]
+        for ab_name in ability_list:
+            ab_id = f"ability_{ab_name}"
+            char.abilities[ab_id] = Ability(
+                name=ab_name,
+                is_public=True,
+            )
+
     context.characters[char_id] = char
 
     return ToolResult(
         success=True,
-        content=f"已添加角色: {name}（{role}）",
+        content=f"已添加角色: {name}（{role}），出场章节: {appearances or '未指定'}",
         data={"character_id": char_id, "character": char},
     )
 
@@ -1134,6 +1202,8 @@ def design_add_location(
     loc_type: str = "其他",
     description: str = "",
     significance: str = "",
+    chapters: str = "",
+    parent: str = "",
 ) -> ToolResult:
     """
     添加地点到世界地图
@@ -1144,6 +1214,8 @@ def design_add_location(
         loc_type: 地点类型（城市/建筑/自然/室内/其他）
         description: 地点描述
         significance: 剧情意义
+        chapters: 涉及章节（逗号分隔，如 "1,3,5-8"）
+        parent: 父级地点名称
     """
     from src.core.map import Location, LocationType, WorldMap
 
@@ -1173,19 +1245,81 @@ def design_add_location(
     }
     location_type = type_map.get(loc_type, LocationType.OTHER)
 
+    # 查找父级地点
+    parent_id = None
+    if parent:
+        for loc in context.world_map.locations.values():
+            if loc.name == parent:
+                parent_id = loc.id
+                break
+
     loc_id = f"loc_{name}"
     loc = Location(
         id=loc_id,
         name=name,
         type=location_type,
         description=description,
+        parent_id=parent_id,
     )
+
+    # 解析涉及章节
+    if chapters:
+        chapter_list = parse_chapter_range(chapters)
+        loc.attrs["chapters"] = chapter_list
+
+    if significance:
+        loc.attrs["significance"] = significance
+
     context.world_map.add_location(loc)
 
     return ToolResult(
         success=True,
-        content=f"已添加地点: {name}（{loc_type}）",
+        content=f"已添加地点: {name}（{loc_type}），涉及章节: {chapters or '未指定'}",
         data={"location_id": loc_id, "location": loc},
+    )
+
+
+def design_add_relation(
+    context: Any,
+    char1: str,
+    char2: str,
+    relation_type: str = "",
+    description: str = "",
+    chapter: str = "",
+    event: str = "",
+    change: str = "",
+) -> ToolResult:
+    """
+    添加角色关系变化（关联章节和事件）
+
+    Args:
+        context: AgentContext
+        char1: 角色名称1
+        char2: 角色名称2
+        relation_type: 关系类型（师徒/仇敌/恋人/盟友/亲属）
+        description: 关系描述
+        chapter: 发生章节（关系变化的节点）
+        event: 触发事件（什么事件导致关系变化）
+        change: 变化描述（从什么状态变成什么状态）
+    """
+    if "relations" not in context.extra:
+        context.extra["relations"] = []
+
+    relation = {
+        "char1": char1,
+        "char2": char2,
+        "type": relation_type,
+        "description": description,
+        "chapter": chapter,
+        "event": event,
+        "change": change,
+    }
+    context.extra["relations"].append(relation)
+
+    return ToolResult(
+        success=True,
+        content=f"已添加关系变化: 第{chapter}章 {char1} ↔ {char2}（{relation_type}）- {change}",
+        data={"relation": relation},
     )
 
 
@@ -1286,35 +1420,100 @@ def design_add_chapter(
     summary: str = "",
     pov: str = "",
     key_events: str = "",
+    characters: str = "",
+    locations: str = "",
+    emotional_arc: str = "",
+    scenes: str = "",
+    conflicts: str = "",
+    foreshadows: str = "",
 ) -> ToolResult:
     """
-    添加章节大纲
+    添加章节大纲（完整版）
 
     Args:
         context: AgentContext
         chapter_num: 章节号
         title: 章节标题
-        summary: 章节摘要
+        summary: 章节摘要（100字内）
         pov: 视角角色
         key_events: 关键事件（逗号分隔）
+        characters: 出场角色（逗号分隔）
+        locations: 涉及地点（逗号分隔）
+        emotional_arc: 情感弧线（如 "紧张→悬疑→释放"）
+        scenes: 场景列表（逗号分隔，如 "开场-客栈,对峙-街道,结局-山林"）
+        conflicts: 冲突点（逗号分隔）
+        foreshadows: 伏笔（逗号分隔，格式：埋设/回收-内容）
     """
+    from src.core.graph.timeline import TimePoint
+
     if isinstance(chapter_num, str):
         chapter_num = int(chapter_num) if chapter_num.isdigit() else 1
 
     if "blueprint" not in context.extra:
         context.extra["blueprint"] = {}
 
+    # 解析角色和地点列表
+    char_list = [c.strip() for c in characters.split(",") if c.strip()] if characters else []
+    loc_list = [l.strip() for l in locations.split(",") if l.strip()] if locations else []
+    scene_list = [s.strip() for s in scenes.split(",") if s.strip()] if scenes else []
+    conflict_list = [c.strip() for c in conflicts.split(",") if c.strip()] if conflicts else []
+    foreshadow_list = [f.strip() for f in foreshadows.split(",") if f.strip()] if foreshadows else []
+
+    # 存储章节蓝图
     context.extra["blueprint"][chapter_num] = {
         "title": title,
         "summary": summary,
         "pov": pov,
         "key_events": key_events,
+        "characters": char_list,
+        "locations": loc_list,
+        "emotional_arc": emotional_arc,
+        "scenes": scene_list,
+        "conflicts": conflict_list,
+        "foreshadows": foreshadow_list,
     }
+
+    # 创建对应的时间点
+    tp_id = f"tp_ch{chapter_num}"
+    tp = TimePoint(
+        id=tp_id,
+        label=f"第{chapter_num}章: {title}",
+        attrs={
+            "chapter": chapter_num,
+            "summary": summary,
+            "key_events": key_events,
+            "emotional_arc": emotional_arc,
+        },
+    )
+
+    # 设置角色位置
+    if char_list and loc_list:
+        for char_name in char_list:
+            # 查找角色 ID
+            char_id = None
+            if context.characters:
+                for cid, char in context.characters.items():
+                    if char.name == char_name:
+                        char_id = cid
+                        break
+            if char_id and loc_list:
+                # 默认第一个地点
+                loc_id = None
+                if context.world_map:
+                    for lid, loc in context.world_map.locations.items():
+                        if loc.name == loc_list[0]:
+                            loc_id = lid
+                            break
+                if loc_id:
+                    tp.character_locations[char_id] = loc_id
+
+    # 添加到时间轴
+    context.timeline.append(tp)
 
     return ToolResult(
         success=True,
-        content=f"已添加第{chapter_num}章: 「{title}」",
-        data={"chapter_num": chapter_num, "title": title},
+        content=f"已添加第{chapter_num}章: 「{title}」\n  角色: {', '.join(char_list) or '未指定'}\n  地点: {', '.join(loc_list) or '未指定'}",
+        data={"chapter_num": chapter_num, "title": title, "timepoint_id": tp_id},
     )
 
 
@@ -1365,41 +1564,80 @@ def design_complete(context: Any, summary: str = "") -> ToolResult:
 
     # 生成设计摘要
     if not summary:
-        lines = ["═══════════════════════════════════════"]
+        lines = ["═" * 50]
         lines.append("【小说设计蓝图】")
-        lines.append("═══════════════════════════════════════")
+        lines.append("═" * 50)
 
+        # 核心种子
         if seed:
-            lines.append("\n【核心种子】")
-            lines.append(f"├── 故事核心: {seed.get('core', '未设置')}")
+            lines.append("\n📌【核心种子】")
+            lines.append(f"   故事核心: {seed.get('core', '未设置')}")
             if seed.get("conflict"):
-                lines.append(f"├── 核心冲突: {seed['conflict']}")
+                lines.append(f"   核心冲突: {seed['conflict']}")
             if seed.get("theme"):
-                lines.append(f"├── 主题内核: {seed['theme']}")
+                lines.append(f"   主题内核: {seed['theme']}")
             if seed.get("tone"):
-                lines.append(f"└── 情感基调: {seed['tone']}")
+                lines.append(f"   情感基调: {seed['tone']}")
 
+        # 世界观设定
         if world:
-            lines.append("\n【世界观设定】")
-            lines.append(f"├── 背景: {world.get('setting', '未设置')}")
+            lines.append("\n🌍【世界观设定】")
+            lines.append(f"   背景: {world.get('setting', '未设置')}")
             if world.get("rules"):
-                lines.append(f"├── 规则: {world['rules']}")
+                lines.append(f"   规则: {world['rules']}")
             if world.get("factions"):
-                lines.append(f"└── 势力: {world['factions']}")
+                lines.append(f"   势力: {world['factions']}")
 
+        # 地点信息
+        if context.world_map and context.world_map.locations:
+            lines.append("\n🗺️【地点设定】")
+            for loc_id, loc in context.world_map.locations.items():
+                chapters = loc.attrs.get("chapters", [])
+                ch_str = f" [章节: {','.join(map(str, chapters))}]" if chapters else ""
+                lines.append(f"   • {loc.name}（{loc.type.value}）{ch_str}")
+                if loc.description:
+                    lines.append(f"     {loc.description[:50]}{'...' if len(loc.description) > 50 else ''}")
+
+        # 角色信息（含出场章节）
         if context.characters:
-            lines.append("\n【角色设定】")
-            for _char_id, char in context.characters.items():
+            lines.append("\n👥【角色设定】")
+            for char_id, char in context.characters.items():
                 role = char.attrs.get("role", "未知")
-                lines.append(f"├── {char.name}（{role}）")
+                appearances = char.attrs.get("appearances", [])
+                ap_str = f" [出场: {','.join(map(str, appearances))}]" if appearances else ""
+                lines.append(f"   • {char.name}（{role}）{ap_str}")
+                if char.attrs.get("goals"):
+                    lines.append(f"     目标: {char.attrs['goals']}")
+                if char.abilities:
+                    ab_names = [ab.name for ab in char.abilities]
+                    lines.append(f"     能力: {', '.join(ab_names)}")
 
+        # 时间线
+        if context.timeline and context.timeline.points:
+            lines.append("\n⏱️【时间线】")
+            for tp in context.timeline.points[:10]:  # 最多显示10个
+                lines.append(f"   • {tp.label}")
+            if len(context.timeline.points) > 10:
+                lines.append(f"   ... 共 {len(context.timeline.points)} 个时间点")
+
+        # 章节蓝图（含角色和地点）
         if blueprint:
-            lines.append("\n【章节蓝图】")
+            lines.append("\n📖【章节蓝图】")
             for ch_num in sorted(blueprint.keys()):
                 ch = blueprint[ch_num]
-                lines.append(f"├── 第{ch_num}章「{ch.get('title', '未命名')}」")
+                lines.append(f"\n   第{ch_num}章「{ch.get('title', '未命名')}」")
+                if ch.get("summary"):
+                    lines.append(f"   摘要: {ch['summary'][:60]}{'...' if len(ch['summary']) > 60 else ''}")
+                if ch.get("characters"):
+                    lines.append(f"   角色: {', '.join(ch['characters'])}")
+                if ch.get("locations"):
+                    lines.append(f"   地点: {', '.join(ch['locations'])}")
+                if ch.get("emotional_arc"):
+                    lines.append(f"   情感: {ch['emotional_arc']}")
 
-        lines.append("\n═══════════════════════════════════════")
+        lines.append("\n" + "═" * 50)
+        lines.append(f"✅ 设计完成：{len(context.characters)} 角色, {len(context.world_map.locations) if context.world_map else 0} 地点, {len(blueprint)} 章节")
+        lines.append("═" * 50)
         summary = "\n".join(lines)
 
     return ToolResult(
@@ -1414,7 +1652,7 @@ def get_design_tools() -> dict[str, Tool]:
     return {
         "add_character": Tool(
             name="add_character",
-            description="添加角色到小说设定中",
+            description="添加角色到小说设定中（完整版，包含对话风格和角色弧线）",
             tool_type=ToolType.UPDATE,
             parameters={
                 "name": "角色名称（必填）",
@@ -1422,6 +1660,11 @@ def get_design_tools() -> dict[str, Tool]:
                 "description": "角色简介",
                 "personality": "性格特点",
                 "background": "背景故事",
+                "appearances": "出场章节（逗号分隔，如 1,3,5-8，重要！）",
+                "goals": "角色目标",
+                "abilities": "角色能力（逗号分隔）",
+                "dialogue_style": "对话风格（说话特点、口头禅）",
+                "arc": "角色弧线（成长变化路径）",
             },
             execute=design_add_character,
         ),
@@ -1434,6 +1677,8 @@ def get_design_tools() -> dict[str, Tool]:
                 "loc_type": "地点类型：城市/建筑/自然/室内/其他（默认其他）",
                 "description": "地点描述",
                 "significance": "剧情意义",
+                "chapters": "涉及章节（逗号分隔，如 1,3,5-8）",
+                "parent": "父级地点名称（用于构建层级）",
             },
             execute=design_add_location,
         ),
@@ -1464,16 +1709,37 @@ def get_design_tools() -> dict[str, Tool]:
         ),
         "add_chapter": Tool(
             name="add_chapter",
-            description="添加章节大纲",
+            description="添加章节大纲（完整版，包含场景和冲突）",
             tool_type=ToolType.UPDATE,
             parameters={
                 "chapter_num": "章节号（必填）",
                 "title": "章节标题（必填）",
-                "summary": "章节摘要",
+                "summary": "章节摘要（100字内）",
                 "pov": "视角角色",
                 "key_events": "关键事件（逗号分隔）",
+                "characters": "出场角色（逗号分隔，重要！）",
+                "locations": "涉及地点（逗号分隔，重要！）",
+                "emotional_arc": "情感弧线（如：紧张→悬疑→释放）",
+                "scenes": "场景列表（逗号分隔，如：开场-客栈,对峙-街道）",
+                "conflicts": "冲突点（逗号分隔）",
+                "foreshadows": "伏笔（逗号分隔，如：埋设-神秘信物,回收-真相揭露）",
             },
             execute=design_add_chapter,
+        ),
+        "add_relation": Tool(
+            name="add_relation",
+            description="添加角色关系变化（关联章节和事件）",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "char1": "角色名称1（必填）",
+                "char2": "角色名称2（必填）",
+                "relation_type": "关系类型：师徒/仇敌/恋人/盟友/亲属",
+                "description": "关系描述",
+                "chapter": "发生章节（关系变化的节点）",
+                "event": "触发事件（什么事件导致关系变化）",
+                "change": "变化描述（从什么状态变成什么状态）",
+            },
+            execute=design_add_relation,
         ),
         "set_world": Tool(
             name="set_world",

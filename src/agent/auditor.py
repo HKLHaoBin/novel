@@ -1,11 +1,12 @@
 """审计师 Agent - 负责一致性检查
 
-五大检查维度：
+六大检查维度：
 1. 时间一致性 - 时间线是否合理
 2. 空间一致性 - 地点是否连贯
 3. 角色一致性 - 行为是否符合人设
 4. 情节一致性 - 前后是否矛盾
 5. 世界观一致性 - 是否违反设定
+6. 信息一致性 - 信息来源是否合理
 """
 
 from .base import AgentContext, AgentResult, BaseAgent
@@ -20,6 +21,9 @@ class Auditor(BaseAgent):
     description = "逻辑审计师，专注于一性检查和质量控制，确保故事前后不矛盾"
     _system_prompt: str
     _metadata: dict
+
+    # 最大修正尝试次数
+    MAX_FIX_ATTEMPTS = 2
 
     def __init__(self, llm=None):
         """初始化审计师"""
@@ -41,10 +45,16 @@ class Auditor(BaseAgent):
             context: 执行上下文，需要包含:
                 - user_input: 待审计的内容
                 - extra.get("audit_type"): 审计类型
-                  (full/quick/time/space/character/plot/world)
+                  (full/quick/time/space/character/plot/world/info)
+                - extra.get("previous_chapters"): 前文内容（用于信息一致性检查）
+                - extra.get("attempt_count"): 当前修正尝试次数
 
         Returns:
-            审计结果
+            审计结果，包含:
+                - issues: 问题列表
+                - suggestions: 修正建议
+                - fixed_content: 自动修正后的内容（如有轻微问题）
+                - needs_rewrite: 是否需要打回重写
         """
         self._context = context
 
@@ -56,6 +66,7 @@ class Auditor(BaseAgent):
             )
 
         audit_type = context.extra.get("audit_type", "full")
+        attempt_count = context.extra.get("attempt_count", 0)
 
         try:
             if audit_type == "full":
@@ -67,14 +78,34 @@ class Auditor(BaseAgent):
                     context, content, audit_type
                 )
 
+            # 分类问题
+            severe_issues = [i for i in issues if i.get("severity") == "severe"]
+            medium_issues = [i for i in issues if i.get("severity") == "medium"]
+            minor_issues = [i for i in issues if i.get("severity") == "minor"]
+
+            # 判断是否需要打回重写
+            needs_rewrite = False
+            fixed_content = None
+
+            if severe_issues:
+                # 有严重问题，需要打回重写
+                needs_rewrite = True
+            elif minor_issues and not medium_issues:
+                # 只有轻微问题，尝试自动修正
+                fixed_content = await self._auto_fix(content, minor_issues)
+
             suggestions = self._generate_suggestions(issues)
 
             return AgentResult(
-                success=len(issues) == 0
-                or all(i.get("severity") != "severe" for i in issues),
+                success=len(severe_issues) == 0,
                 content=self._format_report(issues, suggestions),
                 issues=issues,
                 suggestions=suggestions,
+                extra={
+                    "fixed_content": fixed_content,
+                    "needs_rewrite": needs_rewrite,
+                    "attempt_count": attempt_count,
+                },
             )
 
         except Exception as e:
@@ -87,7 +118,8 @@ class Auditor(BaseAgent):
         """全面审计"""
         issues = []
 
-        dimensions = ["time", "space", "character", "plot", "world"]
+        # 六大维度
+        dimensions = ["time", "space", "character", "plot", "world", "info"]
 
         for dimension in dimensions:
             dim_issues = await self._single_dimension_audit(context, content, dimension)
@@ -161,14 +193,28 @@ class Auditor(BaseAgent):
 - 是否违反社会制度？
 - 是否违反地理设定？
 - 是否违反历史背景？""",
+            "info": """
+- 角色知道的信息是否有来源？
+- 角色是否知道不该知道的事？
+- 身份/名字是否有合理揭示？
+- 是否存在上帝视角泄露？""",
         }
 
         check_list = dimension_checks.get(dimension, "")
 
+        # 信息一致性需要额外的前文上下文
+        extra_context = ""
+        if dimension == "info":
+            previous_chapters = context.extra.get("previous_chapters", {})
+            if previous_chapters:
+                # 提取前文中的信息揭示
+                info_reveals = self._extract_info_reveals(previous_chapters)
+                extra_context = f"\n【前文中已揭示的信息】\n{info_reveals}"
+
         prompt = f"""请对以下内容进行【{dimension}】一致性审计。
 
 【已知上下文】
-{ctx_text}
+{ctx_text}{extra_context}
 
 【待审计内容】
 {content}
@@ -191,6 +237,29 @@ class Auditor(BaseAgent):
         result = await self._call_llm(prompt, system=self._system_prompt)
 
         return self._parse_issues(result, dimension)
+
+    def _extract_info_reveals(self, previous_chapters: dict) -> str:
+        """
+        从前文中提取已揭示的信息
+
+        Args:
+            previous_chapters: 前文章节 {章节号: 内容}
+
+        Returns:
+            信息揭示摘要
+        """
+        reveals = []
+        for ch_num, content in sorted(previous_chapters.items()):
+            # 简单提取：角色名出现、身份揭示等
+            lines = []
+            if "我叫" in content or "名字是" in content:
+                lines.append(f"第{ch_num}章: 有角色自我介绍")
+            if "原来" in content or "其实是" in content:
+                lines.append(f"第{ch_num}章: 有身份揭示")
+            if lines:
+                reveals.extend(lines)
+
+        return "\n".join(reveals) if reveals else "无特殊信息揭示"
 
     def _parse_issues(self, result: str, dimension: str) -> list[dict]:
         """解析问题"""
@@ -241,6 +310,7 @@ class Auditor(BaseAgent):
             "character": "回顾角色人设",
             "plot": "添加铺垫或调整情节",
             "world": "检查设定规则",
+            "info": "补充信息来源或添加揭示场景",
         }
 
         for issue in issues:
@@ -250,6 +320,44 @@ class Auditor(BaseAgent):
             suggestions.append(f"[{dimension}] {desc} → 建议：{fix}")
 
         return suggestions
+
+    async def _auto_fix(self, content: str, minor_issues: list[dict]) -> str:
+        """
+        自动修正轻微问题
+
+        Args:
+            content: 原始内容
+            minor_issues: 轻微问题列表
+
+        Returns:
+            修正后的内容
+        """
+        if not minor_issues:
+            return content
+
+        issues_text = "\n".join(
+            f"- [{i.get('dimension')}] {i.get('description')}"
+            for i in minor_issues
+        )
+
+        prompt = f"""请修正以下内容中的轻微问题。
+
+【原始内容】
+{content}
+
+【需要修正的问题】
+{issues_text}
+
+【修正要求】
+1. 只修正上述问题，不要大幅改写
+2. 保持原有的叙事风格和节奏
+3. 修正后直接输出完整内容，不要解释
+
+【输出格式】
+直接输出修正后的完整章节内容。"""
+
+        fixed = await self._call_llm(prompt, system=self._system_prompt)
+        return fixed
 
     def _format_report(self, issues: list[dict], suggestions: list[str]) -> str:
         """格式化报告"""

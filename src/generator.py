@@ -2,15 +2,24 @@
 
 整合所有模块，实现完整的小说生成流程：
 1. 设计阶段 - Designer
-2. 写作阶段 - Writer
-3. 审计阶段 - Auditor
-4. 润色阶段 - Polisher
+2. 规划阶段 - Planner
+3. 写作阶段 - Writer
+4. 审计阶段 - Auditor
+5. 润色阶段 - Polisher
 """
 
 from collections.abc import Callable
 from pathlib import Path
 
-from src.agent import AgentContext, AgentResult, Auditor, Designer, Polisher, Writer
+from src.agent import (
+    AgentContext,
+    AgentResult,
+    Auditor,
+    Designer,
+    Planner,
+    Polisher,
+    Writer,
+)
 from src.core import NovelContext, NovelCoordinator
 from src.llm import KnowledgeBase, LLMProvider, create_knowledge_base
 
@@ -54,6 +63,7 @@ class NovelGenerator:
 
         # 初始化 Agents
         self.designer = Designer(llm=self.llm)
+        self.planner = Planner(llm=self.llm)
         self.writer = Writer(llm=self.llm)
         self.auditor = Auditor(llm=self.llm)
         self.polisher = Polisher(llm=self.llm)
@@ -133,9 +143,17 @@ class NovelGenerator:
 
         return self.novel_ctx
 
-    async def design(self) -> AgentResult:
+    async def design(
+        self,
+        existing_content: dict[int, str] | None = None,
+        existing_design: str | None = None,
+    ) -> AgentResult:
         """
         执行设计阶段
+
+        Args:
+            existing_content: 现有章节内容 {章节号: 内容}，用于反向构建设计
+            existing_design: 现有设计大纲，作为参考主线
 
         Returns:
             设计结果
@@ -151,6 +169,13 @@ class NovelGenerator:
             self.novel_ctx.snapshot.progress.total_chapters
         )
 
+        # 传递现有内容给设计师（用于反向构建设计）
+        if existing_content:
+            agent_ctx.extra["existing_content"] = existing_content
+        # 传递现有设计作为参考主线
+        if existing_design:
+            agent_ctx.extra["existing_design"] = existing_design
+
         # 执行设计
         result = await self.designer.execute(agent_ctx)
 
@@ -158,6 +183,17 @@ class NovelGenerator:
             # 保存设计结果（同时设置 context 和 snapshot）
             self.novel_ctx.global_summary = result.content
             self.novel_ctx.snapshot.global_summary = result.content
+
+            # 同步 agent_ctx 的数据到 novel_ctx
+            # 1. 同步 characters（引用应该已生效，但确保）
+            if agent_ctx.characters:
+                self.novel_ctx.characters = agent_ctx.characters
+            # 2. 同步 world_map
+            if agent_ctx.world_map and agent_ctx.world_map.locations:
+                self.novel_ctx.world_map = agent_ctx.world_map
+            # 3. 同步 extra 数据（seed, blueprint, world 等）
+            if agent_ctx.extra:
+                self.novel_ctx.snapshot.agent_snapshot.extra.update(agent_ctx.extra)
 
             # 将设计中的节点、边、时间点添加到图结构
             if result.nodes_to_add:
@@ -220,21 +256,22 @@ class NovelGenerator:
 
         # 获取已完成章节内容（用于上下文）
         completed_chapters = {}
+        previous_chapter = ""
         for ch_num in self.novel_ctx.snapshot.progress.completed_chapters:
             content = self.coordinator.state_manager.load_chapter(
                 self.novel_ctx.snapshot.title, ch_num
             )
             if content:
                 completed_chapters[str(ch_num)] = content
+                if ch_num == chapter_num - 1:
+                    previous_chapter = content
 
         # 构建 Agent 上下文
         agent_ctx = self._build_agent_context()
         agent_ctx.extra["chapter_num"] = chapter_num
         agent_ctx.extra["chapter_blueprint"] = blueprint
         # 从用户配置中获取字数，默认3000
-        word_count = self._parse_word_count(
-            self.novel_ctx.snapshot.user_guidance
-        )
+        word_count = self._parse_word_count(self.novel_ctx.snapshot.user_guidance)
         agent_ctx.extra["word_count"] = word_count
         agent_ctx.extra["completed_chapters"] = completed_chapters
         agent_ctx.extra["state_manager"] = self.coordinator.state_manager
@@ -244,7 +281,59 @@ class NovelGenerator:
         )  # 传递设计大纲
         agent_ctx.knowledge = self.knowledge
 
-        # 写作
+        # ========== 新增：Planner 生成本章脉络 ==========
+        self._report_progress("planning", f"正在规划第{chapter_num}章脉络...")
+
+        # 获取章节蓝图
+        chapter_blueprint = {}
+        if hasattr(self.novel_ctx.snapshot, "agent_snapshot"):
+            extra_data = self.novel_ctx.snapshot.agent_snapshot.extra or {}
+            chapter_blueprint = extra_data.get("blueprint", {})
+
+        planner_ctx = self._build_agent_context()
+        planner_ctx.extra["chapter_num"] = chapter_num
+        planner_ctx.extra["previous_chapter"] = previous_chapter
+        planner_ctx.extra["blueprint"] = chapter_blueprint
+
+        planner_result = await self.planner.execute(planner_ctx)
+
+        if planner_result.success:
+            # 使用Planner生成的脉络（约500字）
+            chapter_outline = planner_result.content
+            agent_ctx.extra["chapter_blueprint"] = chapter_outline
+            self._report_progress("planned", f"第{chapter_num}章脉络已生成")
+        else:
+            # Planner失败，使用规则筛选替代LLM生成
+            self._report_progress(
+                "warning", f"规划失败，使用规则筛选: {planner_result.error}"
+            )
+            filtered_outline = self.planner.filter_context(
+                planner_ctx, chapter_num, chapter_blueprint
+            )
+            # 构建简化脉络
+            ch_bp = filtered_outline.get("chapter_blueprint", {})
+            chars = filtered_outline.get("characters", {})
+            locs = filtered_outline.get("locations", {})
+
+            simple_outline = f"""# 第{chapter_num}章脉络（规则筛选）
+
+【本章蓝图】
+- 标题：{ch_bp.get('title', '未命名')}
+- 摘要：{ch_bp.get('summary', '')}
+- 关键事件：{ch_bp.get('key_events', '')}
+
+【出场角色】
+{chr(10).join(f'- {name}' for name in chars) or '无'}
+
+【涉及地点】
+{chr(10).join(f'- {name}' for name in locs) or '无'}
+
+【情感弧线】
+{ch_bp.get('emotional_arc', '未指定')}
+"""
+            agent_ctx.extra["chapter_blueprint"] = simple_outline
+
+        # ========== 写作 ==========
         write_result = await self.writer.execute(agent_ctx)
 
         if not write_result.success:
@@ -254,22 +343,71 @@ class NovelGenerator:
         content = write_result.content
 
         # 审计
+        attempt_count = 0
         if auto_audit:
             self._report_progress("auditing", f"正在审计第{chapter_num}章...")
 
             audit_ctx = self._build_agent_context()
             audit_ctx.user_input = content
-            audit_ctx.extra["audit_type"] = "quick"
+            audit_ctx.extra["audit_type"] = "full"
+            audit_ctx.extra["previous_chapters"] = completed_chapters
+            audit_ctx.extra["attempt_count"] = attempt_count
 
             audit_result = await self.auditor.execute(audit_ctx)
 
             if audit_result.issues:
                 severe_issues = audit_result.get_severe_issues()
+
+                # 有严重问题，尝试打回重写
                 if severe_issues:
                     self._report_progress(
-                        "warning", f"发现{len(severe_issues)}个严重问题，尝试修正..."
+                        "warning",
+                        f"发现{len(severe_issues)}个严重问题，准备重写...",
                     )
-                    # TODO: 自动修正或要求重写
+
+                    # 打回重写（最多2次）
+                    max_rewrite_attempts = 2
+                    for rewrite_attempt in range(max_rewrite_attempts):
+                        self._report_progress(
+                            "rewriting",
+                            f"第{rewrite_attempt + 1}次重写尝试...",
+                        )
+
+                        # 构建重写提示
+                        rewrite_prompt = self._build_rewrite_prompt(
+                            content, severe_issues, audit_result.suggestions
+                        )
+                        agent_ctx.extra["chapter_blueprint"] = rewrite_prompt
+
+                        # 重新写作
+                        rewrite_result = await self.writer.execute(agent_ctx)
+                        if rewrite_result.success:
+                            content = rewrite_result.content
+
+                            # 重新审计
+                            audit_ctx.user_input = content
+                            audit_ctx.extra["attempt_count"] = rewrite_attempt + 1
+                            audit_result = await self.auditor.execute(audit_ctx)
+
+                            # 检查是否还有严重问题
+                            new_severe = audit_result.get_severe_issues()
+                            if not new_severe:
+                                self._report_progress(
+                                    "fixed", "重写后问题已解决"
+                                )
+                                break
+                            severe_issues = new_severe
+                        else:
+                            self._report_progress(
+                                "error", f"重写失败: {rewrite_result.error}"
+                            )
+                            break
+
+                # 有自动修正的内容
+                fixed_content = audit_result.extra.get("fixed_content")
+                if fixed_content:
+                    content = fixed_content
+                    self._report_progress("auto_fixed", "轻微问题已自动修正")
 
         # 润色
         if auto_polish:
@@ -277,12 +415,19 @@ class NovelGenerator:
 
             polish_ctx = self._build_agent_context()
             polish_ctx.user_input = content
-            polish_ctx.extra["polish_level"] = "medium"
+            polish_ctx.extra["min_word_count"] = word_count
 
             polish_result = await self.polisher.execute(polish_ctx)
 
             if polish_result.success:
-                content = polish_result.content
+                # 检查是否回退到原文
+                if polish_result.extra.get("fallback"):
+                    self._report_progress(
+                        "polish_fallback",
+                        polish_result.extra.get("reason", "润色字数不足"),
+                    )
+                else:
+                    content = polish_result.content
 
         # 保存章节
         self.coordinator.complete_chapter(
@@ -392,6 +537,7 @@ class NovelGenerator:
         if self.novel_ctx is None:
             raise RuntimeError("小说上下文未初始化")
         ctx = self.novel_ctx
+
         return AgentContext(
             graph=ctx.graph,
             timeline=ctx.timeline,
@@ -412,6 +558,47 @@ class NovelGenerator:
         """报告进度"""
         if self._on_progress:
             self._on_progress(stage, message)
+
+    def _build_rewrite_prompt(
+        self, original_content: str, issues: list[dict], suggestions: list[str]
+    ) -> str:
+        """
+        构建重写提示
+
+        Args:
+            original_content: 原始内容
+            issues: 问题列表
+            suggestions: 修正建议
+
+        Returns:
+            重写提示
+        """
+        issues_text = "\n".join(
+            f"- [{i.get('severity')}] [{i.get('dimension')}] {i.get('description')}"
+            for i in issues
+        )
+        suggestions_text = "\n".join(f"- {s}" for s in suggestions)
+
+        return f"""【重写要求】
+
+上一版本存在以下问题需要修正：
+
+【问题列表】
+{issues_text}
+
+【修正建议】
+{suggestions_text}
+
+【原始内容摘要】
+{original_content[:1000]}...
+
+【重写指南】
+1. 保持原有的故事脉络和角色设定
+2. 重点修正上述问题
+3. 确保逻辑一致性
+4. 字数保持相近
+
+请重新撰写本章内容。"""
 
     def _parse_word_count(self, user_guidance: str | None) -> int:
         """从用户配置中解析每章字数"""
