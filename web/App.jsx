@@ -148,6 +148,8 @@ const AGENT_NAME_BY_CARD_KEY = Object.fromEntries(
   Object.entries(AGENT_CARD_KEY_BY_NAME).map(([name, key]) => [key, name]),
 );
 
+const LAYOUT_STORAGE_KEY = 'novel_canvas_layout_v1';
+
 function getStatusLabel(job, liveState) {
   if (liveState?.status?.message) return liveState.status.message;
   if (job?.running) return job.message || '运行中';
@@ -203,9 +205,50 @@ function getAgentPrimaryText(agent) {
   return agent?.error || agent?.output || agent?.prompt || agent?.context || '暂无实时消息';
 }
 
+function restoreLayout() {
+  if (typeof window === 'undefined') return INITIAL_LAYOUT;
+  try {
+    const raw = window.localStorage.getItem(LAYOUT_STORAGE_KEY);
+    if (!raw) return INITIAL_LAYOUT;
+    const saved = JSON.parse(raw);
+    return Object.fromEntries(
+      Object.entries(INITIAL_LAYOUT).map(([key, config]) => {
+        const next = saved?.[key] || {};
+        return [
+          key,
+          {
+            ...config,
+            x: Number.isFinite(next.x) ? next.x : config.x,
+            y: Number.isFinite(next.y) ? next.y : config.y,
+            w: Number.isFinite(next.w) ? next.w : config.w,
+            h: Number.isFinite(next.h) ? next.h : config.h,
+          },
+        ];
+      }),
+    );
+  } catch {
+    return INITIAL_LAYOUT;
+  }
+}
+
+function persistLayout(layout) {
+  if (typeof window === 'undefined') return;
+  try {
+    const serializable = Object.fromEntries(
+      Object.entries(layout).map(([key, config]) => [
+        key,
+        { x: config.x, y: config.y, w: config.w, h: config.h },
+      ]),
+    );
+    window.localStorage.setItem(LAYOUT_STORAGE_KEY, JSON.stringify(serializable));
+  } catch {
+    // ignore storage failures
+  }
+}
+
 export default function App() {
   const [content, setContent] = useState(INITIAL_CONTENT);
-  const [layout, setLayout] = useState(INITIAL_LAYOUT);
+  const [layout, setLayout] = useState(() => restoreLayout());
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
   const [isPanning, setIsPanning] = useState(false);
@@ -260,6 +303,10 @@ export default function App() {
       Object.values(updateTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     };
   }, []);
+
+  useEffect(() => {
+    persistLayout(layout);
+  }, [layout]);
 
   const refreshNovels = async (preferredTitle = '') => {
     const response = await fetch('/api/novels');
