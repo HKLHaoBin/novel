@@ -96,7 +96,9 @@ class Designer(BaseAgent):
         existing_content = context.extra.get("existing_content")
         existing_design = context.extra.get("existing_design")
         if existing_content:
-            return await self._design_from_content(context, existing_content, existing_design)
+            return await self._design_from_content(
+                context, existing_content, existing_design
+            )
 
         # 检查是否是扩展设计任务
         user_guidance = context.extra.get("user_guidance", "")
@@ -104,7 +106,9 @@ class Designer(BaseAgent):
         is_expand_task = "扩展任务" in user_guidance and global_summary
 
         if is_expand_task:
-            return await self._expand_design(context, existing_design, user_guidance)
+            return await self._expand_design(
+                context, existing_design or "", user_guidance
+            )
 
         try:
             # 使用工具调用模式进行设计
@@ -175,7 +179,7 @@ class Designer(BaseAgent):
         if not has_seed and not has_blueprint and not has_characters:
             return AgentResult(
                 success=False,
-                error="设计失败：LLM 未调用任何设计工具，未产生结构化数据。请检查模型是否支持 function calling。",
+                error="设计失败：LLM 未调用任何设计工具，未产生结构化数据。",
             )
 
         # 从结构化数据生成设计摘要
@@ -232,9 +236,9 @@ class Designer(BaseAgent):
             lines.append("\n【角色设定】")
             chars_list = list(context.characters.items())
             for i, (_char_id, char) in enumerate(chars_list):
-                is_last = (i == len(chars_list) - 1)
+                is_last = i == len(chars_list) - 1
                 prefix = "└──" if is_last else "├──"
-                
+
                 role = char.attrs.get("role", "未知")
                 desc = char.attrs.get("description", "")
                 personality = char.attrs.get("personality", "")
@@ -244,14 +248,14 @@ class Designer(BaseAgent):
                 abilities = list(char.abilities.keys()) if char.abilities else []
                 dialogue_style = char.attrs.get("dialogue_style", "")
                 arc = char.attrs.get("arc", "")
-                
+
                 # 角色名和定位
                 lines.append(f"{prefix} {char.name}（{role}）")
-                
+
                 # 详细信息
                 sub_prefix = "    └──" if is_last else "│   └──"
                 sub_prefix_mid = "    ├──" if is_last else "│   ├──"
-                
+
                 if desc:
                     lines.append(f"{sub_prefix_mid} 简介: {desc}")
                 if personality:
@@ -262,7 +266,8 @@ class Designer(BaseAgent):
                     lines.append(f"{sub_prefix_mid} 目标: {goals}")
                 if appearances:
                     if isinstance(appearances, list):
-                        lines.append(f"{sub_prefix_mid} 出场章节: {', '.join(map(str, appearances))}")
+                        ch_str = ", ".join(map(str, appearances))
+                        lines.append(f"{sub_prefix_mid} 出场章节: {ch_str}")
                     else:
                         lines.append(f"{sub_prefix_mid} 出场章节: {appearances}")
                 if abilities:
@@ -277,13 +282,18 @@ class Designer(BaseAgent):
         if relations:
             lines.append("\n【角色关系演变】")
             for i, rel in enumerate(relations):
-                is_last = (i == len(relations) - 1)
+                is_last = i == len(relations) - 1
                 prefix = "└──" if is_last else "├──"
                 sub_prefix = "    └──" if is_last else "│   └──"
                 sub_prefix_mid = "    ├──" if is_last else "│   ├──"
-                
-                chapter_info = f"第{rel.get('chapter', '?')}章" if rel.get("chapter") else ""
-                lines.append(f"{prefix} {rel.get('char1', '')} ↔ {rel.get('char2', '')}（{rel.get('type', '未知')}）{chapter_info}")
+
+                chapter_info = (
+                    f"第{rel.get('chapter', '?')}章" if rel.get("chapter") else ""
+                )
+                rel_type = rel.get("type", "未知")
+                char1 = rel.get("char1", "")
+                char2 = rel.get("char2", "")
+                lines.append(f"{prefix} {char1} ↔ {char2}（{rel_type}）{chapter_info}")
                 if rel.get("event"):
                     lines.append(f"{sub_prefix_mid} 触发事件: {rel['event']}")
                 if rel.get("change"):
@@ -296,25 +306,27 @@ class Designer(BaseAgent):
             lines.append("\n【世界地图】")
             locs_list = list(context.world_map.locations.items())
             for i, (_loc_id, loc) in enumerate(locs_list):
-                is_last = (i == len(locs_list) - 1)
+                is_last = i == len(locs_list) - 1
                 prefix = "└──" if is_last else "├──"
-                
+
                 lines.append(f"{prefix} {loc.name}（{loc.type.value}）")
-                
+
                 sub_prefix = "    └──" if is_last else "│   └──"
                 sub_prefix_mid = "    ├──" if is_last else "│   ├──"
-                
+
                 if loc.description:
                     lines.append(f"{sub_prefix_mid} 描述: {loc.description}")
-                
+
                 significance = loc.attrs.get("significance", "")
                 if significance:
                     lines.append(f"{sub_prefix_mid} 剧情意义: {significance}")
-                
+
                 chapters = loc.attrs.get("chapters", [])
                 if chapters:
                     if isinstance(chapters, list):
-                        lines.append(f"{sub_prefix} 涉及章节: {', '.join(map(str, chapters))}")
+                        lines.append(
+                            f"{sub_prefix} 涉及章节: {', '.join(map(str, chapters))}"
+                        )
                     else:
                         lines.append(f"{sub_prefix} 涉及章节: {chapters}")
 
@@ -322,22 +334,24 @@ class Designer(BaseAgent):
         blueprint = context.extra.get("blueprint", {})
         if blueprint:
             lines.append("\n【章节蓝图】")
-            ch_nums = sorted(blueprint.keys(), key=lambda x: int(x) if str(x).isdigit() else 0)
+            ch_nums = sorted(
+                blueprint.keys(), key=lambda x: int(x) if str(x).isdigit() else 0
+            )
             for i, ch_num in enumerate(ch_nums):
-                is_last = (i == len(ch_nums) - 1)
+                is_last = i == len(ch_nums) - 1
                 prefix = "└──" if is_last else "├──"
-                
+
                 ch = blueprint[ch_num]
                 lines.append(f"{prefix} 第{ch_num}章「{ch.get('title', '未命名')}」")
-                
+
                 sub_prefix = "    └──" if is_last else "│   └──"
                 sub_prefix_mid = "    ├──" if is_last else "│   ├──"
-                
+
                 if ch.get("summary"):
                     lines.append(f"{sub_prefix_mid} 摘要: {ch['summary']}")
                 if ch.get("pov"):
                     lines.append(f"{sub_prefix_mid} 视角: {ch['pov']}")
-                
+
                 # 出场角色
                 chars = ch.get("characters", [])
                 if chars:
@@ -345,7 +359,7 @@ class Designer(BaseAgent):
                         lines.append(f"{sub_prefix_mid} 出场角色: {', '.join(chars)}")
                     else:
                         lines.append(f"{sub_prefix_mid} 出场角色: {chars}")
-                
+
                 # 涉及地点
                 locs = ch.get("locations", [])
                 if locs:
@@ -353,13 +367,13 @@ class Designer(BaseAgent):
                         lines.append(f"{sub_prefix_mid} 涉及地点: {', '.join(locs)}")
                     else:
                         lines.append(f"{sub_prefix_mid} 涉及地点: {locs}")
-                
+
                 if ch.get("key_events"):
                     lines.append(f"{sub_prefix_mid} 关键事件: {ch['key_events']}")
-                
+
                 if ch.get("emotional_arc"):
                     lines.append(f"{sub_prefix_mid} 情感弧线: {ch['emotional_arc']}")
-                
+
                 # 场景列表
                 scenes = ch.get("scenes", [])
                 if scenes:
@@ -367,7 +381,7 @@ class Designer(BaseAgent):
                         lines.append(f"{sub_prefix_mid} 场景: {', '.join(scenes)}")
                     else:
                         lines.append(f"{sub_prefix_mid} 场景: {scenes}")
-                
+
                 # 冲突点
                 conflicts = ch.get("conflicts", [])
                 if conflicts:
@@ -375,7 +389,7 @@ class Designer(BaseAgent):
                         lines.append(f"{sub_prefix_mid} 冲突: {', '.join(conflicts)}")
                     else:
                         lines.append(f"{sub_prefix_mid} 冲突: {conflicts}")
-                
+
                 # 伏笔
                 foreshadows = ch.get("foreshadows", [])
                 if foreshadows:
@@ -388,7 +402,10 @@ class Designer(BaseAgent):
         return "\n".join(lines)
 
     async def _design_from_content(
-        self, context: AgentContext, existing_content: dict[int, str], existing_design: str | None = None
+        self,
+        context: AgentContext,
+        existing_content: dict[int, str],
+        existing_design: str | None = None,
     ) -> AgentResult:
         """
         从现有章节内容反向构建设计（保留现有设计主线）
@@ -408,14 +425,14 @@ class Designer(BaseAgent):
             # 截取前2000字以避免太长
             preview = content[:2000] if len(content) > 2000 else content
             content_summary.append(f"【第{ch_num}章】\n{preview}...")
-        
+
         combined_content = "\n\n".join(content_summary)
-        
+
         # 2. 构建分析提示
         total_chapters = context.extra.get("total_chapters", 20)
         word_count = context.extra.get("word_count_per_chapter", 3000)
         user_input = context.user_input or "从现有内容反向构建设计"
-        
+
         # 3. 获取设计工具
         tools = get_all_tools(mode="design")
 
@@ -443,8 +460,15 @@ class Designer(BaseAgent):
 - 总章节：{total_chapters}章
 - 每章字数：约{word_count}字
 
-【设计要求】
-1. {"必须保留现有设计的主线和核心设定！" if existing_design else "分析现有章节，推断故事主线"}
+【设计要求】"""
+
+        # 动态设计要求
+        if existing_design:
+            design_req = "\n1. 必须保留现有设计的主线和核心设定！"
+        else:
+            design_req = "\n1. 分析现有章节，推断故事主线"
+
+        user_prompt += f"""{design_req}
 2. 调用 set_seed 设置故事核心
 3. 调用 add_character 添加角色（从内容中提取，补全对话风格和角色弧线）
 4. 调用 add_location 添加地点
@@ -464,51 +488,43 @@ class Designer(BaseAgent):
         )
 
         # 6. 执行工具调用循环
-        result = await loop.run(
-            system_prompt=None,
+        system_prompt = self._get_design_system_prompt(context)
+        await loop.run(
+            provider=self.llm,  # type: ignore[arg-type]
+            system_prompt=system_prompt,
             user_prompt=user_prompt,
         )
 
-        # 7. 检查是否有错误
-        if result.get("errors"):
-            errors = result["errors"]
+        # 7. 检查是否有结构化工具调用数据
+        has_seed = bool(context.extra.get("seed"))
+        has_blueprint = bool(context.extra.get("blueprint"))
+        has_characters = bool(context.characters)
+
+        if not has_seed and not has_blueprint and not has_characters:
             return AgentResult(
                 success=False,
-                error=f"设计过程中出现错误: {'; '.join(errors)}",
+                error="设计失败：LLM 未调用任何设计工具，未产生结构化数据。",
             )
 
-        # 8. 检查是否调用了工具
-        tool_calls = result.get("tool_calls", [])
-        if not tool_calls:
-            return AgentResult(
-                success=False,
-                error="设计失败：没有调用任何工具，请检查模型是否支持工具调用",
-            )
+        # 8. 生成设计摘要
+        summary = self._generate_summary_from_tools(context)
 
-        # 9. 生成设计摘要
-        summary = self._generate_summary_from_tools(context, tool_calls)
+        # 9. 收集图结构数据
+        nodes_to_add = []
+        timepoints_to_add = []
 
-        # 10. 收集图结构数据
-        nodes = []
-        edges = []
-        timepoints = []
-
-        for call in tool_calls:
-            if call.get("result") and call["result"].data:
-                data = call["result"].data
-                if data.get("nodes"):
-                    nodes.extend(data["nodes"])
-                if data.get("edges"):
-                    edges.extend(data["edges"])
-                if data.get("timepoints"):
-                    timepoints.extend(data["timepoints"])
+        if context.graph:
+            for node in context.graph.nodes.values():
+                nodes_to_add.append(node)
+        if context.timeline:
+            for tp in context.timeline.points.values():
+                timepoints_to_add.append(tp)
 
         return AgentResult(
             success=True,
             content=summary,
-            nodes_to_add=nodes,
-            edges_to_add=edges,
-            timepoints_to_add=timepoints,
+            nodes_to_add=nodes_to_add,
+            timepoints_to_add=timepoints_to_add,
         )
 
     async def _expand_design(
