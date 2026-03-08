@@ -48,6 +48,7 @@ const CARD_STYLES = {
     text: 'text-blue-500',
     dot: 'bg-blue-500',
     bg: 'bg-blue-500/10',
+    ring: 'ring-blue-500/40',
   },
   emerald: {
     border: 'border-emerald-500',
@@ -55,6 +56,7 @@ const CARD_STYLES = {
     text: 'text-emerald-500',
     dot: 'bg-emerald-500',
     bg: 'bg-emerald-500/10',
+    ring: 'ring-emerald-500/40',
   },
   amber: {
     border: 'border-amber-500',
@@ -62,6 +64,7 @@ const CARD_STYLES = {
     text: 'text-amber-500',
     dot: 'bg-amber-500',
     bg: 'bg-amber-500/10',
+    ring: 'ring-amber-500/40',
   },
   cyan: {
     border: 'border-cyan-500',
@@ -69,6 +72,7 @@ const CARD_STYLES = {
     text: 'text-cyan-500',
     dot: 'bg-cyan-500',
     bg: 'bg-cyan-500/10',
+    ring: 'ring-cyan-500/40',
   },
   indigo: {
     border: 'border-indigo-500',
@@ -76,6 +80,7 @@ const CARD_STYLES = {
     text: 'text-indigo-500',
     dot: 'bg-indigo-500',
     bg: 'bg-indigo-500/10',
+    ring: 'ring-indigo-500/40',
   },
   rose: {
     border: 'border-rose-500',
@@ -83,6 +88,7 @@ const CARD_STYLES = {
     text: 'text-rose-500',
     dot: 'bg-rose-500',
     bg: 'bg-rose-500/10',
+    ring: 'ring-rose-500/40',
   },
   purple: {
     border: 'border-purple-500',
@@ -90,6 +96,7 @@ const CARD_STYLES = {
     text: 'text-purple-500',
     dot: 'bg-purple-500',
     bg: 'bg-purple-500/10',
+    ring: 'ring-purple-500/40',
   },
 };
 
@@ -162,9 +169,11 @@ export default function App() {
   const [banner, setBanner] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [startingJob, setStartingJob] = useState(false);
+  const [updatedSections, setUpdatedSections] = useState({});
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
   const prevLiveRef = useRef(null);
+  const updateTimersRef = useRef({});
   const touchRef = useRef({
     startDist: 0,
     startZoom: 1,
@@ -174,15 +183,24 @@ export default function App() {
   });
 
   const aiStatus = useMemo(() => {
-    const activeSections = new Set();
+    const runningSections = new Set();
     const agents = liveState?.agents || {};
     Object.entries(agents).forEach(([name, agent]) => {
       if (agent?.status === 'running') {
-        (AGENT_SECTION_MAP[name] || []).forEach((section) => activeSections.add(section));
+        (AGENT_SECTION_MAP[name] || []).forEach((section) => runningSections.add(section));
       }
     });
-    return { activeSections: Array.from(activeSections) };
+    return {
+      runningSections: Array.from(runningSections),
+      streamingSections: [],
+    };
   }, [liveState]);
+
+  useEffect(() => {
+    return () => {
+      Object.values(updateTimersRef.current).forEach((timer) => window.clearTimeout(timer));
+    };
+  }, []);
 
   const refreshNovels = async (preferredTitle = '') => {
     const response = await fetch('/api/novels');
@@ -309,9 +327,11 @@ export default function App() {
     }
 
     const agents = liveState.agents || {};
+    const nextUpdatedSections = new Set();
     Object.entries(agents).forEach(([name, agent]) => {
       const prevAgent = prev?.agents?.[name];
       if (!prevAgent || prevAgent.status !== agent.status || prevAgent.updated_at !== agent.updated_at) {
+        (AGENT_SECTION_MAP[name] || []).forEach((section) => nextUpdatedSections.add(section));
         console.info(`[NOVEL_LIVE][${name}]`, {
           status: agent.status,
           updatedAt: agent.updated_at,
@@ -323,6 +343,35 @@ export default function App() {
         });
       }
     });
+
+    const prevSections = prev?.sections || {};
+    const currentSections = liveState.sections || {};
+    Object.keys(currentSections).forEach((section) => {
+      if ((currentSections[section] || '') !== (prevSections[section] || '')) {
+        nextUpdatedSections.add(section);
+      }
+    });
+
+    if (nextUpdatedSections.size > 0) {
+      setUpdatedSections((current) => {
+        const next = { ...current };
+        nextUpdatedSections.forEach((section) => {
+          next[section] = true;
+          if (updateTimersRef.current[section]) {
+            window.clearTimeout(updateTimersRef.current[section]);
+          }
+          updateTimersRef.current[section] = window.setTimeout(() => {
+            setUpdatedSections((latest) => {
+              const trimmed = { ...latest };
+              delete trimmed[section];
+              return trimmed;
+            });
+            delete updateTimersRef.current[section];
+          }, 1600);
+        });
+        return next;
+      });
+    }
 
     prevLiveRef.current = liveState;
   }, [liveState, selectedTitle, settings.title]);
@@ -698,21 +747,30 @@ export default function App() {
           {Object.entries(layout).map(([key, config]) => {
             const isMaximized = maximizedKey === key;
             const Icon = config.icon;
-            const isActive = aiStatus.activeSections.includes(key);
+            const isRunning = aiStatus.runningSections.includes(key);
+            const isUpdated = Boolean(updatedSections[key]);
+            const isStreaming = aiStatus.streamingSections.includes(key);
             const color = CARD_STYLES[config.color];
+            const cardBorderClass = isStreaming
+              ? `${color.border} ${color.shadow} ring-2 ring-offset-0 ring-slate-950 ring-white/30`
+              : isRunning
+                ? `${color.border} ${color.shadow} animate-pulse`
+                : isUpdated
+                  ? `${color.border} ${color.shadow} ring-2 ring-offset-0 ring-slate-950 ${color.ring}`
+                  : 'border-slate-800 shadow-black';
 
             if (isMaximized) return null;
 
             return (
               <div
                 key={key}
-                className={`absolute bg-slate-900 rounded-2xl border-2 flex flex-col transition-shadow shadow-2xl ${isActive ? `${color.border} ${color.shadow}` : 'border-slate-800 shadow-black'}`}
+                className={`absolute bg-slate-900 rounded-2xl border-2 flex flex-col transition-all duration-300 shadow-2xl ${cardBorderClass}`}
                 style={{
                   left: config.x,
                   top: config.y,
                   width: config.w,
                   height: config.h,
-                  zIndex: isActive ? 50 : 10,
+                  zIndex: isRunning || isUpdated || isStreaming ? 50 : 10,
                 }}
               >
                 <div
@@ -727,10 +785,16 @@ export default function App() {
                     <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">{config.title}</span>
                   </div>
                   <div className="flex items-center gap-2">
-                    {isActive && (
+                    {(isRunning || isUpdated || isStreaming) && (
                       <div className="flex items-center gap-1 mr-2">
-                        <span className={`w-1.5 h-1.5 rounded-full animate-ping ${color.dot}`} />
-                        <span className={`text-[9px] font-bold ${color.text}`}>AI</span>
+                        <span
+                          className={`w-1.5 h-1.5 rounded-full ${color.dot} ${
+                            isStreaming ? 'animate-pulse' : isRunning ? 'animate-ping' : ''
+                          }`}
+                        />
+                        <span className={`text-[9px] font-bold ${color.text}`}>
+                          {isStreaming ? 'STREAM' : isRunning ? 'RUNNING' : 'UPDATED'}
+                        </span>
                       </div>
                     )}
                     <button
@@ -806,6 +870,20 @@ export default function App() {
           <div className="p-4 bg-slate-950/50">
             <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
               {selectedTitle || settings.title || '未选择小说'}
+            </div>
+            <div className="mb-3 flex flex-wrap gap-2 text-[9px] uppercase tracking-[0.18em] text-slate-500">
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
+                Running
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                Updated
+              </span>
+              <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                Streaming
+              </span>
             </div>
             <div className="h-20 overflow-hidden text-[11px] text-slate-400 italic whitespace-pre-wrap">
               {writerHudText}
