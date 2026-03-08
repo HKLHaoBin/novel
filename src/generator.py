@@ -8,6 +8,7 @@
 5. 润色阶段 - Polisher
 """
 
+import asyncio
 from collections.abc import Callable
 from pathlib import Path
 
@@ -483,15 +484,24 @@ class NovelGenerator:
         results = []
 
         for chapter_num in range(start, total + 1):
-            result = await self.write_chapter(
-                chapter_num,
-                auto_audit=auto_audit,
-                auto_polish=auto_polish,
-            )
-            results.append(result)
+            try:
+                result = await self.write_chapter(
+                    chapter_num,
+                    auto_audit=auto_audit,
+                    auto_polish=auto_polish,
+                )
+                results.append(result)
 
-            if not result.success:
-                break
+                if not result.success:
+                    break
+            except asyncio.CancelledError:
+                # 任务被取消，保存当前进度后重新抛出
+                self.save_checkpoint()
+                raise
+            except KeyboardInterrupt:
+                # 用户中断，保存当前进度后重新抛出
+                self.save_checkpoint()
+                raise
 
         return results
 

@@ -57,13 +57,14 @@ class Tool:
 # =============== 章节查询工具 ===============
 
 
-def complete(context: Any, content: str = "") -> ToolResult:
+def complete(context: Any, content: str = "", title: str = "") -> ToolResult:
     """
     完成任务并提交最终内容
 
     Args:
         context: AgentContext
         content: 最终完成的章节内容
+        title: 章节标题（可选，建议提供）
 
     Returns:
         完成确认
@@ -71,7 +72,49 @@ def complete(context: Any, content: str = "") -> ToolResult:
     return ToolResult(
         success=True,
         content="任务已完成",
-        data={"final_content": content, "completed": True},
+        data={"final_content": content, "chapter_title": title, "completed": True},
+    )
+
+
+def set_chapter_title(context: Any, title: str) -> ToolResult:
+    """
+    设置章节标题
+
+    在提交内容前设置一个独特的章节标题。
+    建议在写作开始时就调用此工具确定标题。
+
+    Args:
+        context: AgentContext
+        title: 章节标题（建议2-10字，避免与前面章节重复）
+
+    Returns:
+        设置确认
+    """
+    # 清理标题：移除章节号前缀和特殊字符
+    import re
+
+    clean_title = title.strip()
+    # 移除 "第X章"、"Chapter X" 等前缀
+    clean_title = re.sub(r"^(第\d+章|Chapter\s*\d+)[：:\s]*", "", clean_title)
+    # 移除标点符号
+    clean_title = re.sub(r"[。：:，,！!？?；;　]+", "", clean_title)
+    clean_title = clean_title.strip()
+
+    # 限制长度
+    if len(clean_title) > 20:
+        clean_title = clean_title[:20]
+
+    if not clean_title:
+        return ToolResult(
+            success=False,
+            content="标题不能为空",
+            suggestions=["请提供一个有意义的章节标题，如：深渊的低语"],
+        )
+
+    return ToolResult(
+        success=True,
+        content=f"章节标题已设置: {clean_title}",
+        data={"chapter_title": clean_title},
     )
 
 
@@ -1783,8 +1826,21 @@ def get_all_tools(mode: str = "write") -> dict[str, Tool]:
             name="complete",
             description="完成任务并提交最终内容。当你完成写作后，必须调用此工具提交内容！",
             tool_type=ToolType.QUERY,
-            parameters={"content": "最终完成的章节内容（必填）"},
+            parameters={
+                "content": "最终完成的章节内容（必填）",
+                "title": "章节标题（可选，如已设置可省略）",
+            },
             execute=complete,
+        ),
+        # 章节标题工具
+        "set_chapter_title": Tool(
+            name="set_chapter_title",
+            description="设置章节标题（建议在写作开始时调用）",
+            tool_type=ToolType.UPDATE,
+            parameters={
+                "title": "章节标题（2-10字，需独特，不与前面章节重复）"
+            },
+            execute=set_chapter_title,
         ),
         # 章节查询工具
         "query_previous_chapter": Tool(
@@ -1894,6 +1950,13 @@ def get_all_tools(mode: str = "write") -> dict[str, Tool]:
             tool_type=ToolType.HELPER,
             parameters={"current_situation": "当前情境描述（可选）"},
             execute=suggest_next,
+        ),
+        "set_chapter_title": Tool(
+            name="set_chapter_title",
+            description="设置章节标题（建议在写作开始时调用）",
+            tool_type=ToolType.HELPER,
+            parameters={"title": "章节标题（2-10字，需独特，不与前面章节重复）"},
+            execute=set_chapter_title,
         ),
     }
 

@@ -4,6 +4,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
+from src.exceptions import convert_intelligence_error
+
 
 class ToolProtocol(Protocol):
     """工具协议 - 定义工具的接口"""
@@ -121,6 +123,7 @@ class ToolCallLoop:
         self.max_iterations = max_iterations
         self.on_tool_call = on_tool_call
         self.final_content: str | None = None
+        self.chapter_title: str | None = None
         self.mode = mode
 
     async def execute_tool(self, name: str, arguments: dict) -> ToolResult:
@@ -150,9 +153,21 @@ class ToolCallLoop:
                 # 优先从 result.data 获取（工具放在那里）
                 if result.data and "final_content" in result.data:
                     self.final_content = result.data["final_content"]
+                    # 同时获取标题
+                    if result.data.get("chapter_title"):
+                        self.chapter_title = result.data["chapter_title"]
                 else:
                     # 回退到从参数获取
                     self.final_content = arguments.get("content", "")
+                    if arguments.get("title"):
+                        self.chapter_title = arguments.get("title")
+
+            # 检测 set_chapter_title 调用
+            if name == "set_chapter_title" and result.success:
+                if result.data and result.data.get("chapter_title"):
+                    self.chapter_title = result.data["chapter_title"]
+                elif arguments.get("title"):
+                    self.chapter_title = arguments.get("title")
 
             return result
         except Exception as e:
@@ -490,6 +505,9 @@ class LLMProvider:
 
         Returns:
             生成的文本
+
+        Raises:
+            NovelError: 转换后的自定义异常
         """
         messages = []
         if system:
@@ -503,15 +521,18 @@ class LLMProvider:
             **{k: v for k, v in kwargs.items() if k not in ["model"]},
         )
 
-        response = await generate_text(
-            messages=messages,
-            provider=self._provider,
-            **config.to_dict()
-            if hasattr(config, "to_dict")
-            else {"model": config.model},
-        )
-
-        return response.text  # type: ignore[no-any-return]
+        try:
+            response = await generate_text(
+                messages=messages,
+                provider=self._provider,
+                **config.to_dict()
+                if hasattr(config, "to_dict")
+                else {"model": config.model},
+            )
+            return response.text  # type: ignore[no-any-return]
+        except Exception as e:
+            # 转换 intelligence 库异常为自定义异常
+            raise convert_intelligence_error(e) from e
 
     async def generate_with_context(
         self,
@@ -533,6 +554,9 @@ class LLMProvider:
 
         Returns:
             生成的文本
+
+        Raises:
+            NovelError: 转换后的自定义异常
         """
         messages = []
         if system:
@@ -556,15 +580,18 @@ class LLMProvider:
             max_tokens=max_tokens,
         )
 
-        response = await generate_text(
-            messages=messages,
-            provider=self._provider,
-            **config.to_dict()
-            if hasattr(config, "to_dict")
-            else {"model": config.model},
-        )
-
-        return response.text  # type: ignore[no-any-return]
+        try:
+            response = await generate_text(
+                messages=messages,
+                provider=self._provider,
+                **config.to_dict()
+                if hasattr(config, "to_dict")
+                else {"model": config.model},
+            )
+            return response.text  # type: ignore[no-any-return]
+        except Exception as e:
+            # 转换 intelligence 库异常为自定义异常
+            raise convert_intelligence_error(e) from e
 
     async def stream(
         self,

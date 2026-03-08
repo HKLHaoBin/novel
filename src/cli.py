@@ -22,11 +22,154 @@ from rich.progress import (
 from rich.table import Table
 from rich.text import Text
 
+from src.exceptions import (
+    APIPermissionError,
+    APIServerError,
+    AuthenticationError,
+    ConfigError,
+    ConnectionFailedError,
+    ContentFilterError,
+    DependencyError,
+    FileSystemError,
+    InvalidChapterError,
+    InvalidRequestError,
+    MissingAPIKeyError,
+    ModelNotFoundError,
+    NovelError,
+    NovelNotFoundError,
+    QuotaExceededError,
+    RateLimitError,
+    RequestTimeoutError,
+    StateError,
+    ValidationError,
+    convert_intelligence_error,
+    get_error_code,
+)
+
 # Rich Console
 console = Console()
 
 # 默认配置路径
 DEFAULT_CONFIG_PATH = Path.home() / ".novel" / "config.json"
+
+
+def handle_error(e: Exception, context: str = "") -> int:
+    """
+    统一错误处理
+
+    使用精确的异常类型匹配，提供用户友好的错误消息和提示。
+
+    Args:
+        e: 异常对象
+        context: 错误上下文描述
+
+    Returns:
+        错误码
+    """
+    # 用户中断
+    if isinstance(e, KeyboardInterrupt):
+        console.print("\n[yellow]⚠️ 用户中断[/yellow]")
+        return 130
+
+    # 异步任务取消
+    if isinstance(e, asyncio.CancelledError):
+        console.print("\n[yellow]⚠️ 任务被取消[/yellow]")
+        return 130
+
+    # 自定义异常 - 使用精确类型匹配
+    if isinstance(e, NovelError):
+        _print_novel_error(e, context)
+        return get_error_code(e)
+
+    # intelligence 库异常 - 转换后处理
+    intelligence_errors = (
+        "AuthenticationError",
+        "RateLimitError",
+        "QuotaExceededError",
+        "ModelNotFoundError",
+        "InternalServerError",
+        "TimeoutError",
+        "ConnectionError",
+        "ContentFilterError",
+        "InvalidRequestError",
+        "ProviderNotAvailableError",
+        "ConfigurationError",
+        "ResponseParseError",
+        "AIError",
+    )
+    if type(e).__name__ in intelligence_errors:
+        converted = convert_intelligence_error(e)
+        _print_novel_error(converted, context)
+        return get_error_code(converted)
+
+    # Python 内置异常
+    if isinstance(e, FileNotFoundError):
+        console.print(f"[red]❌ 文件未找到: {e}[/red]")
+        return 2
+
+    if isinstance(e, PermissionError):
+        console.print(f"[red]❌ 权限不足: {e}[/red]")
+        console.print("[dim]提示: 请检查文件权限[/dim]")
+        return 3
+
+    if isinstance(e, OSError):
+        console.print(f"[red]❌ 系统错误: {e}[/red]")
+        return 4
+
+    if isinstance(e, ImportError):
+        console.print(f"[red]❌ 依赖缺失: {e}[/red]")
+        console.print("[dim]提示: 请安装缺少的依赖[/dim]")
+        return 10
+
+    if isinstance(e, ValueError):
+        console.print(f"[red]❌ 参数错误: {e}[/red]")
+        return 9
+
+    # 其他未知错误
+    context_str = f" ({context})" if context else ""
+    console.print(f"[red]❌ 错误{context_str}: {e}[/red]")
+    return 1
+
+
+def _print_novel_error(e: NovelError, context: str = "") -> None:
+    """
+    打印自定义异常的错误消息
+
+    Args:
+        e: 自定义异常
+        context: 错误上下文
+    """
+    # 根据异常类型选择图标
+    icon_map = {
+        AuthenticationError: "🔑",
+        APIPermissionError: "🚫",
+        RateLimitError: "⏱️",
+        QuotaExceededError: "💰",
+        APIServerError: "🔧",
+        ModelNotFoundError: "🤖",
+        ContentFilterError: "🛡️",
+        InvalidRequestError: "📝",
+        ConnectionFailedError: "🌐",
+        RequestTimeoutError: "⏳",
+        MissingAPIKeyError: "🔑",
+        DependencyError: "📦",
+        NovelNotFoundError: "📚",
+        ValidationError: "⚠️",
+        StateError: "📋",
+        FileSystemError: "💾",
+        ConfigError: "⚙️",
+    }
+
+    icon = icon_map.get(type(e), "❌")
+
+    # 构建错误消息
+    context_str = f" ({context})" if context else ""
+    console.print(f"[red]{icon} {e.message}{context_str}[/red]")
+
+    # 显示提示
+    if e.hint:
+        console.print(f"[dim]提示: {e.hint}[/dim]")
+
 
 
 def load_config() -> dict[str, Any]:
@@ -106,11 +249,7 @@ async def cmd_create(args: argparse.Namespace) -> int:
     llm_config = get_llm_config()
 
     if not llm_config.get("api_key"):
-        console.print(
-            "[red]错误:[/red] 未配置 API Key，"
-            "请先运行 'novel config --api-key YOUR_KEY'"
-        )
-        return 1
+        raise MissingAPIKeyError()
 
     generator = NovelGenerator(
         llm_config=llm_config,
@@ -261,8 +400,7 @@ async def cmd_create(args: argparse.Namespace) -> int:
         generator.save_checkpoint()
 
     except Exception as e:
-        console.print(f"[red]错误: {e}[/red]")
-        return 1
+        return handle_error(e, "创建小说")
     finally:
         await generator.close()
 
@@ -277,8 +415,7 @@ async def cmd_design(args: argparse.Namespace) -> int:
     llm_config = get_llm_config()
 
     if not llm_config.get("api_key"):
-        console.print("[red]错误: 未配置 API Key[/red]")
-        return 1
+        raise MissingAPIKeyError()
 
     edit_mode = EditMode(getattr(args, "edit_mode", "auto"))
     auto_confirm = getattr(args, "auto_confirm", False)
@@ -296,8 +433,7 @@ async def cmd_design(args: argparse.Namespace) -> int:
         novel_ctx = await generator.load_novel(args.title)
 
         if not novel_ctx:
-            console.print(f"[red]错误: 未找到小说 '{args.title}'[/red]")
-            return 1
+            raise NovelNotFoundError(args.title)
 
         # 从现有内容构建设计（保留现有设计作为参考）
         existing_content = None
@@ -409,8 +545,7 @@ async def cmd_design(args: argparse.Namespace) -> int:
         generator.save_checkpoint()
 
     except Exception as e:
-        console.print(f"[red]错误: {e}[/red]")
-        return 1
+        return handle_error(e, "架构设计")
     finally:
         await generator.close()
 
@@ -424,8 +559,7 @@ async def cmd_write(args: argparse.Namespace) -> int:
     llm_config = get_llm_config()
 
     if not llm_config.get("api_key"):
-        console.print("[red]错误: 未配置 API Key[/red]")
-        return 1
+        raise MissingAPIKeyError()
 
     generator = NovelGenerator(
         llm_config=llm_config,
@@ -442,8 +576,7 @@ async def cmd_write(args: argparse.Namespace) -> int:
         novel_ctx = await generator.load_novel(args.title)
 
         if not novel_ctx:
-            console.print(f"[red]❌ 未找到小说 '{args.title}'[/red]")
-            return 1
+            raise NovelNotFoundError(args.title)
 
         total = novel_ctx.snapshot.progress.total_chapters
 
@@ -507,10 +640,22 @@ async def cmd_write(args: argparse.Namespace) -> int:
                         progress_obj.stop()
                         return 1
 
+            except asyncio.CancelledError:
+                console.print("\n[yellow]⚠️ 任务被取消，正在保存进度...[/yellow]")
+                try:
+                    generator.save_checkpoint()
+                    console.print("[green]✓ 进度已保存[/green]")
+                except Exception:
+                    console.print("[red]✗ 保存失败，请手动检查[/red]")
+                progress_obj.stop()
+                return 130
             except KeyboardInterrupt:
                 console.print("\n[yellow]⚠️ 用户中断，正在保存进度...[/yellow]")
-                generator.save_checkpoint()
-                console.print("[green]✓ 进度已保存，可使用 -a 继续写作[/green]")
+                try:
+                    generator.save_checkpoint()
+                    console.print("[green]✓ 进度已保存，可使用 -a 继续写作[/green]")
+                except Exception as e:
+                    console.print(f"[red]✗ 保存失败: {e}[/red]")
                 progress_obj.stop()
                 return 130
             finally:
@@ -521,10 +666,7 @@ async def cmd_write(args: argparse.Namespace) -> int:
             chapter_num = args.chapter
 
             if chapter_num > total:
-                console.print(
-                    f"[red]❌ 章节号 {chapter_num} 超出范围 (总共 {total} 章)[/red]"
-                )
-                return 1
+                raise InvalidChapterError(chapter_num, total)
 
             with console.status(
                 f"[bold blue]✍️ 正在撰写第 {chapter_num} 章...[/bold blue]"
@@ -564,34 +706,8 @@ async def cmd_write(args: argparse.Namespace) -> int:
 
         generator.save_checkpoint()
 
-    except KeyboardInterrupt:
-        console.print("\n[yellow]⚠️ 用户中断[/yellow]")
-        return 130
-    except ConnectionError as e:
-        console.print(f"[red]❌ 网络连接错误: {e}[/red]")
-        console.print("[dim]提示: 请检查网络连接或稍后重试[/dim]")
-        return 1
-    except TimeoutError:
-        console.print("[red]❌ 请求超时[/red]")
-        console.print("[dim]提示: 请检查网络连接或稍后重试[/dim]")
-        return 1
     except Exception as e:
-        error_str = str(e).lower()
-        if "401" in error_str or "unauthorized" in error_str:
-            console.print("[red]❌ API Key 无效或已过期[/red]")
-            console.print("[dim]提示: 请使用 'novel config --api-key' 更新密钥[/dim]")
-        elif "429" in error_str or "rate limit" in error_str:
-            console.print("[red]❌ API 请求频率超限[/red]")
-            console.print("[dim]提示: 请等待几分钟后重试[/dim]")
-        elif "500" in error_str or "502" in error_str or "503" in error_str:
-            console.print("[red]❌ API 服务暂时不可用[/red]")
-            console.print("[dim]提示: 请稍后重试[/dim]")
-        elif "insufficient" in error_str or "quota" in error_str:
-            console.print("[red]❌ API 配额不足[/red]")
-            console.print("[dim]提示: 请检查账户余额[/dim]")
-        else:
-            console.print(f"[red]❌ 错误: {e}[/red]")
-        return 1
+        return handle_error(e, "撰写章节")
     finally:
         await generator.close()
 
@@ -678,8 +794,7 @@ async def cmd_status(args: argparse.Namespace) -> int:
     snapshot = state_manager.load_latest_draft(args.title)
 
     if not snapshot:
-        console.print(f"[red]❌ 未找到小说: {args.title}[/red]")
-        return 1
+        raise NovelNotFoundError(args.title)
 
     # 从文件系统获取实际已写章节
     actual_chapters = state_manager.list_chapters(args.title)
@@ -874,26 +989,14 @@ async def cmd_web(args: argparse.Namespace) -> int:
         import fastapi  # noqa: F401
         import uvicorn  # noqa: F401
     except ImportError:
-        console.print(
-            Panel(
-                "[red]❌ Web 依赖未安装[/red]\n\n"
-                "[dim]请使用以下命令安装：[/dim]\n"
-                "[cyan]    pip install 'dawn-shuttle-novel[web]'[/cyan]\n\n"
-                "[dim]或单独安装：[/dim]\n"
-                "[cyan]    pip install fastapi uvicorn[standard][/cyan]",
-                title="缺少依赖",
-                border_style="red",
-            )
-        )
-        return 1
+        raise DependencyError("fastapi, uvicorn[standard]") from None
 
     # 获取项目根目录
     project_root = Path(__file__).parent.parent
     main_py = project_root / "src" / "main.py"
 
     if not main_py.exists():
-        console.print(f"[red]错误: 未找到 {main_py}[/red]")
-        return 1
+        raise FileNotFoundError(str(main_py))
 
     host = args.host
     port = args.port

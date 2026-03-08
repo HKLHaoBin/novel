@@ -61,17 +61,23 @@ class Writer(BaseAgent):
             # 判断是第一章还是后续章节
             is_first_chapter = chapter_num == 1
 
+            tool_title = None
+
             if is_first_chapter:
-                content = await self._write_first_chapter(
+                content, tool_title = await self._write_first_chapter(
                     context, ctx_text, blueprint, word_count
                 )
             else:
-                content = await self._write_chapter(
+                content, tool_title = await self._write_chapter(
                     context, ctx_text, blueprint, chapter_num, word_count
                 )
 
-            # 提取章节标题
-            title = self._extract_title(content, chapter_num)
+            # 优先使用工具设置的标题
+            if tool_title:
+                title = tool_title
+            else:
+                # 回退到从内容提取
+                title = self._extract_title(content, chapter_num)
 
             return AgentResult(
                 success=True,
@@ -94,8 +100,12 @@ class Writer(BaseAgent):
         ctx_text: str,
         blueprint: str,
         word_count: int,
-    ) -> str:
-        """撰写第一章"""
+    ) -> tuple[str, str | None]:
+        """撰写第一章
+
+        Returns:
+            (内容, 标题) 元组
+        """
 
         system_prompt = f"""你是专业小说作家。
 
@@ -110,14 +120,16 @@ class Writer(BaseAgent):
 - query_location(地点名): 查询地点信息
 - query_timeline(): 查询时间轴
 - suggest_next(): 获取下一步建议
-- complete(content): 提交最终内容（必须调用！）
+- set_chapter_title(标题): 设置章节标题（建议在开始时调用）
+- complete(content, title): 提交最终内容和标题
 
-【重要】完成写作后，必须调用 complete(content) 提交你的内容！
+【重要】完成写作后，必须调用 complete(content, title) 提交你的内容！
 
 【第一章特殊要求】
 1. 开篇黄金500字：建立场景氛围 → 引入主角 → 出现冲突/悬念
 2. 埋下贯穿全文的伏笔（至少1个）
 3. 章末悬念钩子，吸引继续阅读
+4. 必须设置一个独特的章节标题
 
 【输出要求】
 - 使用标准的小说格式（对话用「」）
@@ -132,9 +144,10 @@ class Writer(BaseAgent):
 {word_count}字左右
 
 【工作流程】
-1. 使用工具查询必要的角色和设定信息
-2. 撰写章节内容
-3. 调用 complete(content) 提交最终内容"""
+1. 先调用 set_chapter_title 设置一个独特的章节标题
+2. 使用工具查询必要的角色和设定信息
+3. 撰写章节内容
+4. 调用 complete(content, title) 提交最终内容"""
 
         # 使用工具调用循环
         tool_loop = ToolCallLoop(
@@ -154,7 +167,7 @@ class Writer(BaseAgent):
             max_tokens=word_count + 500,
         )
 
-        return content
+        return content, tool_loop.chapter_title
 
     async def _write_chapter(
         self,
@@ -163,8 +176,12 @@ class Writer(BaseAgent):
         blueprint: str,
         chapter_num: int,
         word_count: int,
-    ) -> str:
-        """撰写后续章节（带工具调用）"""
+    ) -> tuple[str, str | None]:
+        """撰写后续章节（带工具调用）
+
+        Returns:
+            (内容, 标题) 元组
+        """
 
         system_prompt = f"""你是专业小说作家。
 
@@ -181,13 +198,14 @@ class Writer(BaseAgent):
 - query_events(): 查询已发生事件
 - query_timeline(): 查询时间轴
 - suggest_next(): 获取下一步发展建议
-- complete(content): 提交最终内容
+- set_chapter_title(标题): 设置章节标题（建议在开始时调用）
+- complete(content, title): 提交最终内容和标题
 
 【强制要求 - 必须按顺序执行】
 1. 首先调用 query_previous_chapter({chapter_num - 1}) 获取上一章完整内容
-2. 根据前文内容确保风格、角色、情节连贯
-3. 章节标题必须与前文不同，不能重复
-4. 最后调用 complete(content) 提交内容
+2. 调用 set_chapter_title 设置一个独特的章节标题（不要与前面章节重复）
+3. 根据前文内容确保风格、角色、情节连贯
+4. 最后调用 complete(content, title) 提交内容
 
 【写作要求】
 1. 承接上文：风格统一、自然过渡
@@ -197,8 +215,6 @@ class Writer(BaseAgent):
 5. 标题创新：每章标题必须独特，不能与前面章节重复
 
 【输出格式】
-第一行：第{chapter_num}章：[独特的章节标题]
-然后是小说正文内容。
 字数控制在{word_count}字左右。"""
 
         user_prompt = f"""请撰写第{chapter_num}章。
@@ -211,9 +227,10 @@ class Writer(BaseAgent):
 
 【执行步骤 - 严格按顺序】
 步骤1: 调用 query_previous_chapter({chapter_num - 1}) 查看上一章内容
-步骤2: 确认上一章的风格、角色名字、情节发展
-步骤3: 撰写本章内容，确保与前文连贯，标题不重复
-步骤4: 调用 complete(content) 提交"""
+步骤2: 调用 set_chapter_title 设置一个独特的章节标题
+步骤3: 确认上一章的风格、角色名字、情节发展
+步骤4: 撰写本章内容，确保与前文连贯
+步骤5: 调用 complete(content, title) 提交"""
 
         # 使用工具调用循环
         tool_loop = ToolCallLoop(
@@ -233,7 +250,7 @@ class Writer(BaseAgent):
             max_tokens=word_count + 500,
         )
 
-        return content
+        return content, tool_loop.chapter_title
 
     def _extract_title(self, content: str, chapter_num: int) -> str:
         """从内容中提取标题"""

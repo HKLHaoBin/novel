@@ -11,6 +11,7 @@ AI 驱动的小说生成系统，基于多 Agent 协作架构。
 - **知识库记忆**：自动维护角色设定、世界观、情节线索的一致性
 - **断点续传**：支持保存进度、中断恢复、中途修改
 - **灵活配置**：支持 OpenAI、DeepSeek、Anthropic 等多种 LLM
+- **Web UI**：可选的 Web 界面，支持实时预览和交互
 
 ## Agent 职责
 
@@ -18,14 +19,18 @@ AI 驱动的小说生成系统，基于多 Agent 协作架构。
 |-------|------|
 | Designer | 构建小说蓝图：角色、世界观、主线、章节大纲 |
 | Planner | 规划章节脉络，过滤上下文至约500字 |
-| Writer | 根据脉络撰写章节初稿 |
+| Writer | 根据脉络撰写章节初稿，支持工具调用设置标题 |
 | Auditor | 六维审计，自动修正轻微问题，标记严重问题 |
 | Polisher | 最小化润色，删除冗余虚词，保持字数 |
 
 ## 安装
 
 ```bash
+# 基础安装
 pip install dawn-shuttle-novel
+
+# 包含 Web UI
+pip install "dawn-shuttle-novel[web]"
 ```
 
 ## 快速开始
@@ -73,6 +78,19 @@ novel list "我的小说"
 novel export "我的小说" -o output.txt
 ```
 
+### 5. Web UI（可选）
+
+```bash
+# 启动 Web 服务
+novel web
+
+# 指定端口和主机
+novel web --host 0.0.0.0 --port 8080
+
+# 开发模式（热重载）
+novel web --reload
+```
+
 ## 命令参考
 
 | 命令 | 说明 |
@@ -84,6 +102,20 @@ novel export "我的小说" -o output.txt
 | `novel list` | 列出小说/章节 |
 | `novel status` | 查看状态 |
 | `novel export` | 导出小说 |
+| `novel web` | 启动 Web UI |
+
+## 错误处理
+
+系统提供精确的错误类型和友好的提示信息：
+
+| 错误类型 | 说明 |
+|----------|------|
+| `AuthenticationError` | API Key 无效或过期 (401) |
+| `RateLimitError` | 请求频率超限 (429) |
+| `QuotaExceededError` | API 配额不足 |
+| `NovelNotFoundError` | 小说不存在 |
+| `InvalidChapterError` | 章节号无效 |
+| `DependencyError` | 依赖缺失 |
 
 ## 项目结构
 
@@ -91,12 +123,14 @@ novel export "我的小说" -o output.txt
 src/
 ├── cli.py           # 命令行入口
 ├── generator.py     # 生成器主类
+├── exceptions.py    # 自定义异常类型
 ├── agent/           # Agent 模块
 │   ├── designer.py  # 架构设计
 │   ├── planner.py   # 脉络规划（上下文过滤）
 │   ├── writer.py    # 章节写作
 │   ├── auditor.py   # 内容审计（六维检查）
-│   └── polisher.py  # 文字润色（最小化改动）
+│   ├── polisher.py  # 文字润色（最小化改动）
+│   └── tools.py     # 工具系统（查询/更新）
 ├── core/            # 核心数据结构
 │   ├── graph/       # 图结构（角色/事件/地点关系）
 │   ├── timeline.py  # 时间轴
