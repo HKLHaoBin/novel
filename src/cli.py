@@ -681,6 +681,10 @@ async def cmd_status(args: argparse.Namespace) -> int:
         console.print(f"[red]❌ 未找到小说: {args.title}[/red]")
         return 1
 
+    # 从文件系统获取实际已写章节
+    actual_chapters = state_manager.list_chapters(args.title)
+    actual_count = len(actual_chapters)
+
     # 基础信息面板
     info_text = Text()
     info_text.append("ID: ", style="dim")
@@ -693,20 +697,20 @@ async def cmd_status(args: argparse.Namespace) -> int:
     info_text.append(f"{snapshot.progress.current_phase.value}\n")
     info_text.append("进度: ", style="dim")
     info_text.append(
-        f"{snapshot.progress.current_chapter}/"
+        f"{actual_count}/"
         f"{snapshot.progress.total_chapters} 章\n"
     )
 
-    # 完成章节
-    if snapshot.progress.completed_chapters:
-        completed = sorted(snapshot.progress.completed_chapters)
+    # 完成章节（从文件系统获取）
+    if actual_chapters:
+        completed = sorted([ch["chapter_num"] for ch in actual_chapters])
         info_text.append("完成: ", style="dim")
         info_text.append(f"{len(completed)} 章 ")
         if len(completed) <= 10:
             info_text.append(f"[{', '.join(map(str, completed))}]", style="green")
         else:
-            first_five = ', '.join(map(str, completed[:5]))
-            last_three = ', '.join(map(str, completed[-3:]))
+            first_five = ", ".join(map(str, completed[:5]))
+            last_three = ", ".join(map(str, completed[-3:]))
             info_text.append(f"[{first_five} ... {last_three}]", style="green")
 
     console.print(

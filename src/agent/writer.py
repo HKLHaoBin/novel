@@ -242,12 +242,13 @@ class Writer(BaseAgent):
         lines = content.strip().split("\n")
         if lines:
             first_line = lines[0].strip()
-            # 匹配 "第X章 标题" 或 "第X章：标题" 等格式
-            match = re.match(r"第\d+章[：:\s]*(.+?)(?:\n|$)", first_line)
+            # 匹配 "第X章 标题" 或 "第X章：标题" 或 "第X章标题"
+            # 支持全角/半角冒号、空格分隔，或无分隔符
+            match = re.match(r"第\d+章[：:\s]*(.+)$", first_line)
             if match:
                 title = match.group(1).strip()
-                # 清理标题中的非法字符
-                title = re.sub(r"[。：:，,！!？?；;　\s]+", "", title)
+                # 清理标题中的非法字符（保留空格）
+                title = re.sub(r"[。：:，,！!？?；;　]+", "", title).strip()
                 # 限制长度
                 if len(title) > 20:
                     title = title[:20]
