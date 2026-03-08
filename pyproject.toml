@@ -7,7 +7,7 @@ name = "dawn-shuttle-novel"
 version = "0.4.2"
 description = "AI 小说生成器 - 支持长篇小说自动生成"
 readme = "README.md"
-license = "MIT"
+license = "LGPL-2.1-only"
 requires-python = ">=3.10"
 dependencies = [
     "dawn_shuttle_intelligence>=0.2.2",
