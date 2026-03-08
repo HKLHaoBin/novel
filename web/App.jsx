@@ -3,6 +3,7 @@ import {
   Activity,
   BookOpen,
   Clock,
+  FileText,
   Globe,
   GitBranch,
   GripHorizontal,
@@ -29,7 +30,12 @@ const INITIAL_LAYOUT = {
   plots: { x: 600, y: 600, w: 500, h: 250, color: 'indigo', title: '情节线索', icon: GitBranch },
   map: { x: 1150, y: 400, w: 350, h: 250, color: 'rose', title: '地图结构', icon: MapPin },
   timeline: { x: 1150, y: 700, w: 350, h: 250, color: 'purple', title: '时间轴', icon: Clock },
-  runtime: { x: 1550, y: 120, w: 448, h: 416, color: 'blue', title: '运行面板', icon: Activity },
+  agent_designer: { x: 1550, y: 80, w: 380, h: 300, color: 'blue', title: 'Designer', icon: Activity },
+  agent_planner: { x: 1960, y: 80, w: 380, h: 300, color: 'indigo', title: 'Planner', icon: Activity },
+  agent_writer: { x: 1550, y: 410, w: 380, h: 300, color: 'emerald', title: 'Writer', icon: Activity },
+  agent_auditor: { x: 1960, y: 410, w: 380, h: 300, color: 'amber', title: 'Auditor', icon: Activity },
+  agent_polisher: { x: 1755, y: 740, w: 380, h: 300, color: 'rose', title: 'Polisher', icon: Activity },
+  chapters_panel: { x: 2165, y: 740, w: 520, h: 420, color: 'amber', title: '已生成章节', icon: FileText },
 };
 
 const INITIAL_CONTENT = {
@@ -40,7 +46,12 @@ const INITIAL_CONTENT = {
   timeline: '',
   map: '',
   guidance: '',
-  runtime: '',
+  agent_designer: '',
+  agent_planner: '',
+  agent_writer: '',
+  agent_auditor: '',
+  agent_polisher: '',
+  chapters_panel: '',
 };
 
 const CARD_STYLES = {
@@ -125,51 +136,22 @@ const AGENT_SECTION_MAP = {
   Polisher: ['guidance'],
 };
 
+const AGENT_CARD_KEY_BY_NAME = {
+  Designer: 'agent_designer',
+  Planner: 'agent_planner',
+  Writer: 'agent_writer',
+  Auditor: 'agent_auditor',
+  Polisher: 'agent_polisher',
+};
+
+const AGENT_NAME_BY_CARD_KEY = Object.fromEntries(
+  Object.entries(AGENT_CARD_KEY_BY_NAME).map(([name, key]) => [key, name]),
+);
+
 function getStatusLabel(job, liveState) {
   if (liveState?.status?.message) return liveState.status.message;
   if (job?.running) return job.message || '运行中';
   return '云端就绪';
-}
-
-function getRuntimePanelData(liveState) {
-  const agents = Object.entries(liveState?.agents || {});
-  if (agents.length === 0) {
-    return {
-      label: 'WAITING',
-      title: '等待 Agent 启动...',
-      body: '暂无实时消息',
-    };
-  }
-
-  const runningEntry = agents.find(([, agent]) => agent?.status === 'running');
-  const latestEntry = [...agents].sort((a, b) => {
-    const aTime = new Date(a[1]?.updated_at || 0).getTime();
-    const bTime = new Date(b[1]?.updated_at || 0).getTime();
-    return bTime - aTime;
-  })[0];
-
-  const [agentName, agent] = runningEntry || latestEntry;
-  const statusLabel = agent?.status === 'running' ? 'RUNNING' : agent?.status === 'failed' ? 'FAILED' : 'UPDATED';
-  const title = agent?.meta?.chapter_title || agent?.meta?.mode || agent?.name || agentName;
-  const body = agent?.error || agent?.output || agent?.prompt || agent?.context || '暂无实时消息';
-
-  return {
-    label: `${agentName}_${statusLabel}`,
-    title,
-    body,
-  };
-}
-
-function getPreferredAgentName(liveState) {
-  const agents = Object.entries(liveState?.agents || {});
-  const runningEntry = agents.find(([, agent]) => agent?.status === 'running');
-  if (runningEntry) return runningEntry[0];
-  const latestEntry = [...agents].sort((a, b) => {
-    const aTime = new Date(a[1]?.updated_at || 0).getTime();
-    const bTime = new Date(b[1]?.updated_at || 0).getTime();
-    return bTime - aTime;
-  })[0];
-  return latestEntry?.[0] || 'Writer';
 }
 
 function getAuditDimensionStates(agent) {
@@ -208,8 +190,17 @@ function buildContentFromLive(liveState) {
     timeline: liveState.sections.timeline || '',
     map: liveState.sections.map || '',
     guidance: liveState.sections.guidance || '',
-    runtime: '',
+    agent_designer: '',
+    agent_planner: '',
+    agent_writer: '',
+    agent_auditor: '',
+    agent_polisher: '',
+    chapters_panel: '',
   };
+}
+
+function getAgentPrimaryText(agent) {
+  return agent?.error || agent?.output || agent?.prompt || agent?.context || '暂无实时消息';
 }
 
 export default function App() {
@@ -227,13 +218,14 @@ export default function App() {
   const [liveState, setLiveState] = useState(null);
   const [job, setJob] = useState(null);
   const [novels, setNovels] = useState([]);
+  const [chapters, setChapters] = useState([]);
+  const [selectedChapter, setSelectedChapter] = useState(null);
   const [selectedTitle, setSelectedTitle] = useState('');
   const [error, setError] = useState('');
   const [banner, setBanner] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [startingJob, setStartingJob] = useState(false);
   const [updatedSections, setUpdatedSections] = useState({});
-  const [selectedAgentName, setSelectedAgentName] = useState('Writer');
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
   const prevLiveRef = useRef(null);
@@ -252,6 +244,9 @@ export default function App() {
     Object.entries(agents).forEach(([name, agent]) => {
       if (agent?.status === 'running') {
         (AGENT_SECTION_MAP[name] || []).forEach((section) => runningSections.add(section));
+        if (AGENT_CARD_KEY_BY_NAME[name]) {
+          runningSections.add(AGENT_CARD_KEY_BY_NAME[name]);
+        }
       }
     });
     return {
@@ -265,14 +260,6 @@ export default function App() {
       Object.values(updateTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     };
   }, []);
-
-  useEffect(() => {
-    const preferredAgent = getPreferredAgentName(liveState);
-    const currentAgent = liveState?.agents?.[selectedAgentName];
-    if (!currentAgent && preferredAgent && preferredAgent !== selectedAgentName) {
-      setSelectedAgentName(preferredAgent);
-    }
-  }, [liveState, selectedAgentName]);
 
   const refreshNovels = async (preferredTitle = '') => {
     const response = await fetch('/api/novels');
@@ -323,6 +310,45 @@ export default function App() {
     }
   };
 
+  const loadChapterContent = async (title, chapterNum, fallbackMeta = null) => {
+    if (!title || !chapterNum) return;
+    const response = await fetch(`/api/novels/${encodeURIComponent(title)}/chapters/${chapterNum}`);
+    if (!response.ok) {
+      throw new Error(`加载章节正文失败: ${response.status}`);
+    }
+    const data = await response.json();
+    setSelectedChapter({
+      chapter_num: data.chapter_num,
+      title: data.chapter_title || fallbackMeta?.title || '',
+      word_count: data.word_count || fallbackMeta?.word_count || 0,
+      content: data.content || '',
+    });
+  };
+
+  const loadChapters = async (title) => {
+    if (!title) {
+      setChapters([]);
+      setSelectedChapter(null);
+      return;
+    }
+    const response = await fetch(`/api/novels/${encodeURIComponent(title)}/chapters`);
+    if (!response.ok) {
+      throw new Error(`加载章节列表失败: ${response.status}`);
+    }
+    const data = await response.json();
+    const items = data.items || [];
+    setChapters(items);
+    const preferred =
+      items.find((item) => item.chapter_num === selectedChapter?.chapter_num) ||
+      items[items.length - 1] ||
+      null;
+    if (preferred) {
+      await loadChapterContent(title, preferred.chapter_num, preferred);
+    } else {
+      setSelectedChapter(null);
+    }
+  };
+
   useEffect(() => {
     loadSettings().catch((err) => setError(err.message || '加载设置失败'));
     refreshNovels().catch((err) => setError(err.message || '加载小说列表失败'));
@@ -335,6 +361,7 @@ export default function App() {
     const eventSource = new EventSource(`/api/novels/${encodeURIComponent(selectedTitle)}/events/stream`);
 
     loadLiveState(selectedTitle);
+    loadChapters(selectedTitle).catch((err) => setError(err.message || '加载章节失败'));
 
     eventSource.onmessage = (event) => {
       if (cancelled) return;
@@ -367,6 +394,7 @@ export default function App() {
         setJob(data);
         if (!data.running && settings.title) {
           await refreshNovels(settings.title);
+          await loadChapters(settings.title);
         }
       } catch {
         // ignore polling errors
@@ -404,6 +432,9 @@ export default function App() {
       const prevAgent = prev?.agents?.[name];
       if (!prevAgent || prevAgent.status !== agent.status || prevAgent.updated_at !== agent.updated_at) {
         (AGENT_SECTION_MAP[name] || []).forEach((section) => nextUpdatedSections.add(section));
+        if (AGENT_CARD_KEY_BY_NAME[name]) {
+          nextUpdatedSections.add(AGENT_CARD_KEY_BY_NAME[name]);
+        }
         console.info(`[NOVEL_LIVE][${name}]`, {
           status: agent.status,
           updatedAt: agent.updated_at,
@@ -737,11 +768,125 @@ export default function App() {
     }
   };
 
-  const runtimePanel = getRuntimePanelData(liveState);
-  const maximizedValue = maximizedKey === 'runtime' ? runtimePanel.body : (content[maximizedKey] || '');
-  const agentEntries = Object.entries(liveState?.agents || {});
-  const selectedAgent = liveState?.agents?.[selectedAgentName] || null;
-  const auditDimensionStates = getAuditDimensionStates(selectedAgent);
+  const renderAgentPanel = (agentName) => {
+    const agent = liveState?.agents?.[agentName] || null;
+    const auditDimensionStates = agentName === 'Auditor' ? getAuditDimensionStates(agent) : [];
+
+    return (
+      <div className="flex h-full flex-col bg-slate-900 p-4">
+        <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
+          {selectedTitle || settings.title || '未选择小说'}
+        </div>
+        <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+          <div className="flex items-center justify-between">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
+              <div className="mt-1 text-sm font-semibold text-slate-200">{agentName}</div>
+            </div>
+            <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+              <span
+                className={`h-2 w-2 rounded-full ${
+                  agent?.status === 'failed'
+                    ? 'bg-rose-400'
+                    : agent?.status === 'running'
+                      ? 'bg-blue-400 animate-pulse'
+                      : agent?.status === 'completed'
+                        ? 'bg-emerald-400'
+                        : 'bg-slate-600'
+                }`}
+              />
+              <span>{agent?.status || 'idle'}</span>
+            </div>
+          </div>
+          <div className="mt-2 text-[11px] leading-5 text-slate-500">
+            {liveState?.status?.message || '暂无阶段消息'}
+          </div>
+          <div className="mt-2 text-[11px] leading-5 text-slate-400">
+            {agent?.current_task || agent?.progress || '暂无任务'}
+          </div>
+        </div>
+        <div className="mb-3 grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+            <div className="uppercase tracking-[0.18em] text-slate-500">Last Tool</div>
+            <div className="mt-1 break-all text-slate-300">{agent?.last_tool?.name || '-'}</div>
+          </div>
+          <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+            <div className="uppercase tracking-[0.18em] text-slate-500">Tool Result</div>
+            <div className="mt-1 break-all text-slate-300">
+              {agent?.last_tool_result?.name
+                ? `${agent.last_tool_result.name} / ${agent.last_tool_result.success ? 'ok' : 'failed'}`
+                : '-'}
+            </div>
+          </div>
+        </div>
+        {agentName === 'Auditor' && (
+          <div className="mb-3">
+            <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">Audit Dimensions</div>
+            <div className="grid grid-cols-2 gap-2">
+              {auditDimensionStates.map((item) => {
+                const phaseTone = item.phase === 'completed'
+                  ? 'border-emerald-500/30 text-emerald-300'
+                  : item.phase === 'unparsed'
+                    ? 'border-amber-500/30 text-amber-300'
+                    : item.phase === 'start'
+                      ? 'border-blue-500/30 text-blue-300'
+                      : 'border-slate-800 text-slate-400';
+                return (
+                  <div key={item.key} className={`rounded-xl border bg-slate-900 px-3 py-2 ${phaseTone}`}>
+                    <div className="flex items-center justify-between text-[11px] font-semibold">
+                      <span>{item.label}</span>
+                      <span
+                        className={`h-2 w-2 rounded-full ${
+                          item.phase === 'completed'
+                            ? 'bg-emerald-400'
+                            : item.phase === 'unparsed'
+                              ? 'bg-amber-400'
+                              : item.phase === 'start'
+                                ? 'bg-blue-400 animate-pulse'
+                                : 'bg-slate-600'
+                        }`}
+                      />
+                    </div>
+                    <div className="mt-1 text-[10px] leading-5">{item.message}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        <textarea
+          readOnly
+          className="flex-1 w-full resize-none rounded-xl border border-slate-800 bg-slate-900 p-3 text-[12px] leading-6 text-slate-300 outline-none"
+          value={getAgentPrimaryText(agent)}
+        />
+        <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+          <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Recent Events</div>
+          <div className="mt-2 space-y-2">
+            {(agent?.recent_events || []).slice(-4).reverse().map((event, index) => (
+              <div key={`${event.timestamp}-${index}`} className="text-[11px] leading-5 text-slate-400">
+                <span className="mr-2 uppercase tracking-[0.16em] text-slate-500">{event.type}</span>
+                <span>{event.message}</span>
+              </div>
+            ))}
+            {(!agent?.recent_events || agent.recent_events.length === 0) && (
+              <div className="text-[11px] text-slate-500">暂无事件</div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const maximizedAgentName = AGENT_NAME_BY_CARD_KEY[maximizedKey];
+  const maximizedAgent = maximizedAgentName ? liveState?.agents?.[maximizedAgentName] : null;
+  const maximizedValue = maximizedAgentName
+    ? getAgentPrimaryText(maximizedAgent)
+    : maximizedKey === 'chapters_panel'
+      ? (selectedChapter?.content || '暂无章节内容')
+      : (content[maximizedKey] || '');
+  const maximizedAuditDimensionStates = maximizedAgentName === 'Auditor'
+    ? getAuditDimensionStates(maximizedAgent)
+    : [];
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden select-none font-sans">
@@ -890,128 +1035,59 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-hidden relative">
-                  {key === 'runtime' ? (
-                    <div className="flex h-full flex-col bg-slate-900 p-4">
-                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
-                        {selectedTitle || settings.title || '未选择小说'}
-                      </div>
-                      <div className="mb-3 grid grid-cols-2 gap-2">
-                        {agentEntries.map(([agentName, agent]) => {
-                          const isSelected = agentName === selectedAgentName;
-                          const isRunningAgent = agent?.status === 'running';
-                          const statusTone = agent?.status === 'failed'
-                            ? 'text-rose-300 border-rose-500/30'
-                            : isRunningAgent
-                              ? 'text-blue-300 border-blue-500/30'
-                              : 'text-slate-300 border-slate-800';
-                          return (
-                            <button
-                              key={agentName}
-                              type="button"
-                              onClick={() => setSelectedAgentName(agentName)}
-                              className={`rounded-xl border px-3 py-2 text-left transition ${statusTone} ${isSelected ? 'bg-slate-800' : 'bg-slate-900 hover:bg-slate-800/80'}`}
-                            >
-                              <div className="flex items-center justify-between text-[11px] font-semibold">
-                                <span>{agentName}</span>
-                                <span className={`h-2 w-2 rounded-full ${agent?.status === 'failed' ? 'bg-rose-400' : isRunningAgent ? 'bg-blue-400 animate-pulse' : 'bg-slate-600'}`} />
-                              </div>
-                              <div className="mt-1 text-[10px] uppercase tracking-[0.18em] opacity-80">
-                                {agent?.status || 'idle'}
-                              </div>
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
-                        <div className="mt-1 text-sm font-semibold text-slate-200">
-                          {selectedAgent?.name || runtimePanel.title}
+                  {AGENT_NAME_BY_CARD_KEY[key] ? (
+                    renderAgentPanel(AGENT_NAME_BY_CARD_KEY[key])
+                  ) : key === 'chapters_panel' ? (
+                    <div className="flex h-full bg-slate-900">
+                      <div className="w-[42%] border-r border-slate-800 p-3">
+                        <div className="mb-3 text-[10px] uppercase tracking-[0.2em] text-slate-500">
+                          Chapters
                         </div>
-                        <div className="mt-2 text-[11px] leading-5 text-slate-500">
-                          {liveState?.status?.message || '暂无阶段消息'}
-                        </div>
-                        <div className="mt-2 text-[11px] leading-5 text-slate-400">
-                          {selectedAgent?.current_task || selectedAgent?.progress || '暂无任务'}
-                        </div>
-                      </div>
-                      <div className="mb-3 grid grid-cols-2 gap-2 text-[10px] text-slate-400">
-                        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
-                          <div className="uppercase tracking-[0.18em] text-slate-500">Last Tool</div>
-                          <div className="mt-1 break-all text-slate-300">
-                            {selectedAgent?.last_tool?.name || '-'}
-                          </div>
-                        </div>
-                        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
-                          <div className="uppercase tracking-[0.18em] text-slate-500">Tool Result</div>
-                          <div className="mt-1 break-all text-slate-300">
-                            {selectedAgent?.last_tool_result?.name
-                              ? `${selectedAgent.last_tool_result.name} / ${selectedAgent.last_tool_result.success ? 'ok' : 'failed'}`
-                              : '-'}
-                          </div>
-                        </div>
-                      </div>
-                      {selectedAgentName === 'Auditor' && (
-                        <div className="mb-3">
-                          <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">Audit Dimensions</div>
-                          <div className="grid grid-cols-2 gap-2">
-                            {auditDimensionStates.map((item) => {
-                              const phaseTone = item.phase === 'completed'
-                                ? 'border-emerald-500/30 text-emerald-300'
-                                : item.phase === 'unparsed'
-                                  ? 'border-amber-500/30 text-amber-300'
-                                : item.phase === 'start'
-                                  ? 'border-blue-500/30 text-blue-300'
-                                  : 'border-slate-800 text-slate-400';
-                              return (
-                                <div
-                                  key={item.key}
-                                  className={`rounded-xl border bg-slate-900 px-3 py-2 ${phaseTone}`}
-                                >
-                                  <div className="flex items-center justify-between text-[11px] font-semibold">
-                                    <span>{item.label}</span>
-                                    <span className={`h-2 w-2 rounded-full ${
-                                      item.phase === 'completed'
-                                        ? 'bg-emerald-400'
-                                        : item.phase === 'unparsed'
-                                          ? 'bg-amber-400'
-                                          : item.phase === 'start'
-                                            ? 'bg-blue-400 animate-pulse'
-                                            : 'bg-slate-600'
-                                    }`} />
-                                  </div>
-                                  <div className="mt-1 text-[10px] leading-5">
-                                    {item.message}
-                                  </div>
+                        <div className="space-y-2 overflow-y-auto pr-1" style={{ height: '100%' }}>
+                          {chapters.map((chapter) => {
+                            const isSelected = selectedChapter?.chapter_num === chapter.chapter_num;
+                            return (
+                              <button
+                                key={chapter.chapter_num}
+                                type="button"
+                                onClick={() => loadChapterContent(selectedTitle || settings.title, chapter.chapter_num, chapter).catch((err) => setError(err.message || '加载章节正文失败'))}
+                                className={`w-full rounded-xl border px-3 py-3 text-left transition ${
+                                  isSelected
+                                    ? 'border-amber-500/40 bg-slate-800 text-amber-200'
+                                    : 'border-slate-800 bg-slate-900 text-slate-300 hover:bg-slate-800'
+                                }`}
+                              >
+                                <div className="text-[11px] font-semibold">
+                                  第{chapter.chapter_num}章
                                 </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      )}
-                      <textarea
-                        readOnly
-                        className="flex-1 w-full resize-none rounded-xl border border-slate-800 bg-slate-900 p-3 text-[12px] leading-6 text-slate-300 outline-none"
-                        value={
-                          selectedAgent?.error
-                          || selectedAgent?.output
-                          || selectedAgent?.prompt
-                          || selectedAgent?.context
-                          || runtimePanel.body
-                        }
-                      />
-                      <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
-                        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Recent Events</div>
-                        <div className="mt-2 space-y-2">
-                          {(selectedAgent?.recent_events || []).slice(-4).reverse().map((event, index) => (
-                            <div key={`${event.timestamp}-${index}`} className="text-[11px] leading-5 text-slate-400">
-                              <span className="mr-2 uppercase tracking-[0.16em] text-slate-500">{event.type}</span>
-                              <span>{event.message}</span>
+                                <div className="mt-1 text-sm leading-5">
+                                  {chapter.title || '未命名章节'}
+                                </div>
+                                <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">
+                                  {chapter.word_count || 0} 字
+                                </div>
+                              </button>
+                            );
+                          })}
+                          {chapters.length === 0 && (
+                            <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-4 text-sm text-slate-500">
+                              暂无已生成章节
                             </div>
-                          ))}
-                          {(!selectedAgent?.recent_events || selectedAgent.recent_events.length === 0) && (
-                            <div className="text-[11px] text-slate-500">暂无事件</div>
                           )}
                         </div>
+                      </div>
+                      <div className="flex-1 p-4">
+                        <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                          <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前章节</div>
+                          <div className="mt-1 text-sm font-semibold text-slate-200">
+                            {selectedChapter ? `第${selectedChapter.chapter_num}章 ${selectedChapter.title || '未命名章节'}` : '请选择章节'}
+                          </div>
+                        </div>
+                        <textarea
+                          readOnly
+                          className="h-[calc(100%-4.5rem)] w-full resize-none rounded-xl border border-slate-800 bg-slate-900 p-3 text-[12px] leading-6 text-slate-300 outline-none"
+                          value={selectedChapter?.content || '请选择左侧章节查看正文'}
+                        />
                       </div>
                     </div>
                   ) : (
@@ -1059,12 +1135,44 @@ export default function App() {
                   <Minimize2 size={20} className="md:w-6 md:h-6" />
                 </button>
               </div>
-              <textarea
-                readOnly
-                autoFocus
-                className="flex-1 bg-transparent p-4 md:p-8 lg:p-12 text-base md:text-lg lg:text-xl text-slate-200 outline-none resize-none font-serif leading-relaxed md:leading-loose"
-                value={maximizedValue}
-              />
+              {maximizedAgentName ? (
+                <div className="flex flex-1 flex-col overflow-hidden p-4 md:p-8">
+                  <div className="mb-4 rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3">
+                    <div className="flex items-center justify-between">
+                      <div className="text-sm font-semibold text-slate-200">{maximizedAgentName}</div>
+                      <div className="text-[11px] uppercase tracking-[0.18em] text-slate-500">
+                        {maximizedAgent?.status || 'idle'}
+                      </div>
+                    </div>
+                    <div className="mt-2 text-sm leading-6 text-slate-400">
+                      {maximizedAgent?.current_task || maximizedAgent?.progress || liveState?.status?.message || '暂无任务'}
+                    </div>
+                  </div>
+                  {maximizedAgentName === 'Auditor' && (
+                    <div className="mb-4 grid grid-cols-2 gap-3 lg:grid-cols-3">
+                      {maximizedAuditDimensionStates.map((item) => (
+                        <div key={item.key} className="rounded-2xl border border-slate-800 bg-slate-900 px-4 py-3">
+                          <div className="text-xs font-bold uppercase tracking-[0.18em] text-slate-500">{item.label}</div>
+                          <div className="mt-2 text-sm leading-6 text-slate-300">{item.message}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  <textarea
+                    readOnly
+                    autoFocus
+                    className="flex-1 resize-none rounded-2xl border border-slate-800 bg-slate-900 p-4 text-base text-slate-200 outline-none md:p-6 md:text-lg lg:text-xl"
+                    value={maximizedValue}
+                  />
+                </div>
+              ) : (
+                <textarea
+                  readOnly
+                  autoFocus
+                  className="flex-1 bg-transparent p-4 md:p-8 lg:p-12 text-base md:text-lg lg:text-xl text-slate-200 outline-none resize-none font-serif leading-relaxed md:leading-loose"
+                  value={maximizedValue}
+                />
+              )}
             </div>
           </div>
         )}

@@ -387,6 +387,38 @@ async def get_novel_live(title: str):
     return _ensure_live_state(title, _resolve_save_dir(settings))
 
 
+@app.get("/api/novels/{title}/chapters")
+async def get_novel_chapters(title: str):
+    settings = load_web_settings()
+    save_dir = _resolve_save_dir(settings)
+    state_manager = _state_manager(save_dir)
+    chapters = state_manager.list_chapters(title)
+    return {"title": title, "items": chapters}
+
+
+@app.get("/api/novels/{title}/chapters/{chapter_num}")
+async def get_novel_chapter(title: str, chapter_num: int):
+    settings = load_web_settings()
+    save_dir = _resolve_save_dir(settings)
+    state_manager = _state_manager(save_dir)
+    chapters = state_manager.list_chapters(title)
+    chapter_meta = next((item for item in chapters if item["chapter_num"] == chapter_num), None)
+    if not chapter_meta:
+        raise HTTPException(status_code=404, detail=f"未找到章节: 第{chapter_num}章")
+
+    content = state_manager.load_chapter(title, chapter_num)
+    if content is None:
+        raise HTTPException(status_code=404, detail=f"未找到章节正文: 第{chapter_num}章")
+
+    return {
+        "title": title,
+        "chapter_num": chapter_num,
+        "chapter_title": chapter_meta.get("title", ""),
+        "word_count": chapter_meta.get("word_count", len(content)),
+        "content": content,
+    }
+
+
 @app.get("/api/novels/{title}/events/stream")
 async def stream_novel_events(title: str):
     settings = load_web_settings()
