@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dawn-shuttle-novel"
-version = "0.4.5"
+version = "0.4.6"
 description = "AI 小说生成器 - 支持长篇小说自动生成"
 readme = "README.md"
 license = "LGPL-2.1-only"
@@ -21,6 +21,10 @@ dev = [
     "mypy>=1.0.0",
     "pytest>=7.0.0",
     "pytest-asyncio>=0.21.0",
+]
+web = [
+    "fastapi>=0.110.0",
+    "uvicorn[standard]>=0.27.0",
 ]
 
 [project.scripts]

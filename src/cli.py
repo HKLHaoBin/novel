@@ -865,9 +865,27 @@ async def cmd_export(args: argparse.Namespace) -> int:
 async def cmd_web(args: argparse.Namespace) -> int:
     """启动前端 Web 服务"""
     import subprocess
+    import time
     import webbrowser
     from pathlib import Path
-    import time
+
+    # 检查 web 依赖是否安装
+    try:
+        import fastapi  # noqa: F401
+        import uvicorn  # noqa: F401
+    except ImportError:
+        console.print(
+            Panel(
+                "[red]❌ Web 依赖未安装[/red]\n\n"
+                "[dim]请使用以下命令安装：[/dim]\n"
+                "[cyan]    pip install 'dawn-shuttle-novel[web]'[/cyan]\n\n"
+                "[dim]或单独安装：[/dim]\n"
+                "[cyan]    pip install fastapi uvicorn[standard][/cyan]",
+                title="缺少依赖",
+                border_style="red",
+            )
+        )
+        return 1
 
     # 获取项目根目录
     project_root = Path(__file__).parent.parent
@@ -909,11 +927,13 @@ async def cmd_web(args: argparse.Namespace) -> int:
 
     # 延迟打开浏览器（给服务启动时间）
     if not no_browser:
+
         def open_browser():
             time.sleep(1.5)
             webbrowser.open(url)
 
         import threading
+
         threading.Thread(target=open_browser, daemon=True).start()
 
     # 启动服务
@@ -925,22 +945,24 @@ async def cmd_web(args: argparse.Namespace) -> int:
             stderr=subprocess.STDOUT,
             text=True,
             bufsize=1,
-            universal_newlines=True
+            universal_newlines=True,
         )
 
         # 实时输出日志
-        for line in process.stdout:
-            line = line.rstrip()
-            if line:
-                # 美化 uvicorn 日志输出
-                if "Uvicorn running" in line:
-                    console.print(f"[green]{line}[/green]")
-                elif "Application startup complete" in line:
-                    console.print(f"[green]{line}[/green]")
-                elif "error" in line.lower() or "error" in line.lower():
-                    console.print(f"[red]{line}[/red]")
-                else:
-                    console.print(f"[dim]{line}[/dim]")
+        stdout = process.stdout
+        if stdout:
+            for line in stdout:
+                line = line.rstrip()
+                if line:
+                    # 美化 uvicorn 日志输出
+                    is_running = "Uvicorn running" in line
+                    is_complete = "Application startup complete" in line
+                    if is_running or is_complete:
+                        console.print(f"[green]{line}[/green]")
+                    elif "error" in line.lower():
+                        console.print(f"[red]{line}[/red]")
+                    else:
+                        console.print(f"[dim]{line}[/dim]")
 
         process.wait()
 
