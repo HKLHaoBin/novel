@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { 
   BookOpen, Globe, GitBranch, Users, Clock, MapPin, 
   MessageSquare, Zap, Activity, ChevronRight, 
-  Settings, Maximize2, Minimize2, MousePointer2, Loader2, GripHorizontal, Search
+  Settings, Maximize2, Minimize2, MousePointer2, Loader2, GripHorizontal, Search, X
 } from 'lucide-react';
 
 // --- 初始布局数据 ---
@@ -35,9 +35,11 @@ export default function App() {
   const [maximizedKey, setMaximizedKey] = useState(null);
   const [isSyncing, setIsSyncing] = useState(false);
   const [aiStatus, setAiStatus] = useState({ activeSections: ['characters', 'outline'] });
-  
+  const [showGuide, setShowGuide] = useState(true);  
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
+  const touchRef = useRef({ startDist: 0, startZoom: 1, startOffset: { x: 0, y: 0 }, lastTouch: null, longPressTimer: null });
+  const [isTouchDragging, setIsTouchDragging] = useState(false);
 
   // --- 画布缩放逻辑 (滚轮) ---
   const handleWheel = (e) => {
@@ -82,61 +84,207 @@ export default function App() {
     }
   };
 
+  // --- 触摸事件处理（移动端支持）---
+  const getTouchDistance = (touches) => {
+    const dx = touches[0].clientX - touches[1].clientX;
+    const dy = touches[0].clientY - touches[1].clientY;
+    return Math.sqrt(dx * dx + dy * dy);
+  };
+
+  const getTouchCenter = (touches) => {
+    return {
+      x: (touches[0].clientX + touches[1].clientX) / 2,
+      y: (touches[0].clientY + touches[1].clientY) / 2
+    };
+  };
+
+  const handleTouchStart = (e) => {
+    if (maximizedKey) return;
+    const touches = e.touches;
+    
+    if (touches.length === 2) {
+      // 双指缩放开始
+      e.preventDefault();
+      const dist = getTouchDistance(touches);
+      const center = getTouchCenter(touches);
+      touchRef.current = {
+        ...touchRef.current,
+        startDist: dist,
+        startZoom: zoom,
+        startCenter: center,
+        startOffset: { ...canvasOffset }
+      };
+    } else if (touches.length === 1 && e.target === e.currentTarget) {
+      // 单指拖拽画布开始
+      touchRef.current = {
+        ...touchRef.current,
+        startTouch: { x: touches[0].clientX, y: touches[0].clientY },
+        startOffset: { ...canvasOffset },
+        isDragging: false
+      };
+    }
+  };
+
+  const handleTouchMove = (e) => {
+    if (maximizedKey) return;
+    const touches = e.touches;
+    
+    if (touches.length === 2 && touchRef.current.startDist) {
+      // 双指缩放
+      e.preventDefault();
+      const dist = getTouchDistance(touches);
+      const center = getTouchCenter(touches);
+      const scale = dist / touchRef.current.startDist;
+      const newZoom = Math.min(Math.max(touchRef.current.startZoom * scale, 0.2), 3);
+      
+      // 以双指中心为缩放中心
+      const rect = canvasRef.current.getBoundingClientRect();
+      const centerX = center.x - rect.left;
+      const centerY = center.y - rect.top;
+      
+      const dx = (centerX - touchRef.current.startOffset.x) / touchRef.current.startZoom;
+      const dy = (centerY - touchRef.current.startOffset.y) / touchRef.current.startZoom;
+      
+      setZoom(newZoom);
+      setCanvasOffset({
+        x: centerX - dx * newZoom,
+        y: centerY - dy * newZoom
+      });
+    } else if (touches.length === 1 && touchRef.current.startTouch) {
+      // 单指拖拽画布
+      const dx = touches[0].clientX - touchRef.current.startTouch.x;
+      const dy = touches[0].clientY - touchRef.current.startTouch.y;
+      
+      if (Math.abs(dx) > 5 || Math.abs(dy) > 5) {
+        touchRef.current.isDragging = true;
+        setCanvasOffset({
+          x: touchRef.current.startOffset.x + dx,
+          y: touchRef.current.startOffset.y + dy
+        });
+      }
+    }
+  };
+
+  const handleTouchEnd = (e) => {
+    touchRef.current.startDist = 0;
+    touchRef.current.startTouch = null;
+    touchRef.current.isDragging = false;
+  };
+
   // --- 容器拖动逻辑 ---
   const startDraggingCard = (key, e) => {
     if (maximizedKey) return;
     if (e.button !== 0) return; // 仅左键可拖动容器内容，防止中键冲突
     e.stopPropagation();
-    const startX = e.clientX;
-    const startY = e.clientY;
+    performCardDrag(key, e.clientX, e.clientY);
+  };
+
+  // 执行卡片拖拽（鼠标和触摸共用）
+  const performCardDrag = (key, startClientX, startClientY) => {
     const initialPos = { ...layout[key] };
 
-    const onMouseMove = (moveEvent) => {
+    const onMove = (moveEvent) => {
+      const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX);
+      const clientY = moveEvent.clientY || (moveEvent.touches && moveEvent.touches[0].clientY);
+      
       setLayout(prev => ({
         ...prev,
         [key]: {
           ...prev[key],
-          // 注意：位移量需要除以 zoom，否则缩放后移动速度会不匹配
-          x: initialPos.x + (moveEvent.clientX - startX) / zoom,
-          y: initialPos.y + (moveEvent.clientY - startY) / zoom
+          x: initialPos.x + (clientX - startClientX) / zoom,
+          y: initialPos.y + (clientY - startClientY) / zoom
         }
       }));
     };
 
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+    const onEnd = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
+      setIsTouchDragging(false);
     };
 
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
+  };
+
+  // 移动端长按开始拖动容器
+  const handleCardTouchStart = (key, e) => {
+    if (maximizedKey) return;
+    const touch = e.touches[0];
+    
+    // 清除之前的定时器
+    if (touchRef.current.longPressTimer) {
+      clearTimeout(touchRef.current.longPressTimer);
+    }
+    
+    touchRef.current.longPressStart = { x: touch.clientX, y: touch.clientY };
+    
+    // 长按 500ms 后开始拖动
+    touchRef.current.longPressTimer = setTimeout(() => {
+      setIsTouchDragging(true);
+      performCardDrag(key, touch.clientX, touch.clientY);
+    }, 500);
+  };
+
+  const handleCardTouchMove = (e) => {
+    // 如果移动超过 10px，取消长按
+    if (touchRef.current.longPressStart && touchRef.current.longPressTimer) {
+      const touch = e.touches[0];
+      const dx = touch.clientX - touchRef.current.longPressStart.x;
+      const dy = touch.clientY - touchRef.current.longPressStart.y;
+      
+      if (Math.abs(dx) > 10 || Math.abs(dy) > 10) {
+        clearTimeout(touchRef.current.longPressTimer);
+        touchRef.current.longPressTimer = null;
+      }
+    }
+  };
+
+  const handleCardTouchEnd = () => {
+    if (touchRef.current.longPressTimer) {
+      clearTimeout(touchRef.current.longPressTimer);
+      touchRef.current.longPressTimer = null;
+    }
+    touchRef.current.longPressStart = null;
   };
 
   // --- 容器缩放逻辑 ---
   const startResizingCard = (key, e) => {
     e.stopPropagation();
-    const startX = e.clientX;
-    const startY = e.clientY;
+    const isTouch = e.type === 'touchstart';
+    const startX = isTouch ? e.touches[0].clientX : e.clientX;
+    const startY = isTouch ? e.touches[0].clientY : e.clientY;
     const initialSize = { w: layout[key].w, h: layout[key].h };
 
-    const onMouseMove = (moveEvent) => {
+    const onMove = (moveEvent) => {
+      const clientX = moveEvent.clientX || (moveEvent.touches && moveEvent.touches[0].clientX);
+      const clientY = moveEvent.clientY || (moveEvent.touches && moveEvent.touches[0].clientY);
+      
       setLayout(prev => ({
         ...prev,
         [key]: {
           ...prev[key],
-          w: Math.max(200, initialSize.w + (moveEvent.clientX - startX) / zoom),
-          h: Math.max(150, initialSize.h + (moveEvent.clientY - startY) / zoom)
+          w: Math.max(200, initialSize.w + (clientX - startX) / zoom),
+          h: Math.max(150, initialSize.h + (clientY - startY) / zoom)
         }
       }));
     };
 
-    const onMouseUp = () => {
-      window.removeEventListener('mousemove', onMouseMove);
-      window.removeEventListener('mouseup', onMouseUp);
+    const onEnd = () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onEnd);
+      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchend', onEnd);
     };
 
-    window.addEventListener('mousemove', onMouseMove);
-    window.addEventListener('mouseup', onMouseUp);
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onEnd);
+    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchend', onEnd);
   };
 
   const handleMouseMove = (e) => {
@@ -170,23 +318,23 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden select-none font-sans">
       {/* --- Header --- */}
-      <header className="h-14 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/80 backdrop-blur-xl z-[100]">
-        <div className="flex items-center gap-6">
+      <header className="h-14 border-b border-slate-800 flex items-center justify-between px-3 md:px-6 bg-slate-900/80 backdrop-blur-xl z-[100]">
+        <div className="flex items-center gap-2 md:gap-6">
           <div className="flex items-center gap-2">
             <Zap size={20} className="text-blue-500 fill-blue-500" />
-            <h1 className="font-black text-lg tracking-tighter">NOVEL_CANVAS_PRO</h1>
+            <h1 className="font-black text-sm md:text-lg tracking-tighter">NOVEL_CANVAS</h1>
           </div>
-          <div className="flex items-center gap-3 px-3 py-1 bg-slate-950 rounded-full border border-slate-800">
+          <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-950 rounded-full border border-slate-800">
              <div className={`w-2 h-2 rounded-full ${isSyncing ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
              <span className="text-[10px] font-bold text-slate-500 uppercase">{isSyncing ? '同步中' : '云端就绪'}</span>
           </div>
         </div>
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2 bg-slate-800/50 px-3 py-1 rounded-md">
-            <Search size={14} className="text-slate-500" />
+        <div className="flex items-center gap-2 md:gap-6">
+          <div className="flex items-center gap-2 bg-slate-800/50 px-2 md:px-3 py-1 rounded-md">
+            <Search size={14} className="text-slate-500 hidden md:block" />
             <span className="text-xs font-mono text-slate-400">{Math.round(zoom * 100)}%</span>
           </div>
-          <div className="text-[10px] text-slate-600 font-mono tracking-tighter">
+          <div className="hidden lg:block text-[10px] text-slate-600 font-mono tracking-tighter">
             X: {Math.round(canvasOffset.x)} Y: {Math.round(canvasOffset.y)}
           </div>
           <button className="p-2 hover:bg-slate-800 rounded-lg transition-colors"><Settings size={18} /></button>
@@ -196,12 +344,15 @@ export default function App() {
       {/* --- Infinite Canvas --- */}
       <main 
         ref={canvasRef}
-        className={`flex-1 relative overflow-hidden bg-slate-950 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'}`}
+        className={`flex-1 relative overflow-hidden bg-slate-950 ${isPanning ? 'cursor-grabbing' : 'cursor-grab'} touch-none`}
         onMouseDown={handleCanvasMouseDown}
         onMouseMove={handleMouseMove}
         onMouseUp={handleMouseUp}
         onMouseLeave={handleMouseUp}
         onWheel={handleWheel}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
       >
         {/* Dot Pattern Background */}
         <div 
@@ -240,8 +391,11 @@ export default function App() {
               >
                 {/* Drag Header */}
                 <div 
-                  className="p-3 border-b border-slate-800 flex items-center justify-between cursor-move bg-slate-900/50 rounded-t-2xl"
+                  className="p-3 border-b border-slate-800 flex items-center justify-between cursor-move bg-slate-900/50 rounded-t-2xl select-none"
                   onMouseDown={(e) => startDraggingCard(key, e)}
+                  onTouchStart={(e) => handleCardTouchStart(key, e)}
+                  onTouchMove={handleCardTouchMove}
+                  onTouchEnd={handleCardTouchEnd}
                 >
                   <div className="flex items-center gap-2">
                     <Icon size={16} className={`text-${config.color}-500`} />
@@ -274,8 +428,9 @@ export default function App() {
 
                 {/* Resize Handle */}
                 <div 
-                  className="absolute bottom-1 right-1 cursor-nwse-resize p-1 text-slate-700 hover:text-slate-400"
+                  className="absolute bottom-1 right-1 cursor-nwse-resize p-2 text-slate-700 hover:text-slate-400 touch-manipulation"
                   onMouseDown={(e) => startResizingCard(key, e)}
+                  onTouchStart={(e) => startResizingCard(key, e)}
                 >
                   <GripHorizontal size={14} className="rotate-45" />
                 </div>
@@ -286,28 +441,28 @@ export default function App() {
 
         {/* --- Fullscreen Focused Mode Layer --- */}
         {maximizedKey && (
-          <div className="absolute inset-0 z-[200] bg-slate-950 flex items-center justify-center p-12 animate-in fade-in zoom-in duration-300">
-             <div className={`w-full max-w-5xl h-full bg-slate-900 rounded-3xl border-2 border-${layout[maximizedKey].color}-500/50 shadow-2xl flex flex-col shadow-${layout[maximizedKey].color}-500/20`}>
-                <div className="p-6 border-b border-slate-800 flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className={`p-2 rounded-xl bg-${layout[maximizedKey].color}-500/10`}>
-                      {React.createElement(layout[maximizedKey].icon, { size: 24, className: `text-${layout[maximizedKey].color}-500` })}
+          <div className="absolute inset-0 z-[200] bg-slate-950 flex items-center justify-center animate-in fade-in zoom-in duration-300">
+             <div className={`w-full h-full md:w-[calc(100%-2rem)] md:h-[calc(100%-2rem)] md:max-w-7xl md:rounded-2xl bg-slate-900 border-2 border-${layout[maximizedKey].color}-500/50 shadow-2xl flex flex-col shadow-${layout[maximizedKey].color}-500/20`}>
+                <div className="p-3 md:p-4 border-b border-slate-800 flex items-center justify-between">
+                  <div className="flex items-center gap-2 md:gap-3">
+                    <div className={`p-1.5 md:p-2 rounded-lg md:rounded-xl bg-${layout[maximizedKey].color}-500/10`}>
+                      {React.createElement(layout[maximizedKey].icon, { size: 20, className: `text-${layout[maximizedKey].color}-500 md:w-6 md:h-6` })}
                     </div>
                     <div>
-                      <h2 className="text-xl font-bold text-white tracking-tight">{layout[maximizedKey].title}</h2>
-                      <p className="text-slate-500 text-xs uppercase tracking-widest font-bold">沉浸式编辑模式</p>
+                      <h2 className="text-base md:text-lg font-bold text-white tracking-tight">{layout[maximizedKey].title}</h2>
+                      <p className="hidden md:block text-slate-500 text-xs uppercase tracking-widest font-bold">沉浸式编辑模式</p>
                     </div>
                   </div>
                   <button 
                     onClick={() => toggleMaximize(maximizedKey)}
-                    className="p-3 bg-slate-800 hover:bg-slate-700 rounded-2xl text-white transition-all hover:scale-110"
+                    className="p-2 md:p-3 bg-slate-800 hover:bg-slate-700 rounded-xl md:rounded-2xl text-white transition-all hover:scale-110"
                   >
-                    <Minimize2 size={24} />
+                    <Minimize2 size={20} className="md:w-6 md:h-6" />
                   </button>
                 </div>
                 <textarea
                   autoFocus
-                  className="flex-1 bg-transparent p-12 text-xl text-slate-200 outline-none resize-none font-serif leading-loose"
+                  className="flex-1 bg-transparent p-4 md:p-8 lg:p-12 text-base md:text-lg lg:text-xl text-slate-200 outline-none resize-none font-serif leading-relaxed md:leading-loose"
                   value={content[maximizedKey]}
                   onChange={(e) => setContent(prev => ({ ...prev, [maximizedKey]: e.target.value }))}
                   onBlur={(e) => handleContentUpdate(maximizedKey, e.target.value)}
@@ -330,11 +485,20 @@ export default function App() {
         </div>
 
         {/* Canvas Guide */}
-        <div className="absolute top-20 left-1/2 -translate-x-1/2 px-4 py-2 bg-slate-900/80 border border-slate-800 rounded-full text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] backdrop-blur pointer-events-none flex items-center gap-4">
-          <span className="flex items-center gap-1"><MousePointer2 size={10} /> 左键背景/滚轮中键拖拽</span>
-          <div className="w-1 h-1 rounded-full bg-slate-700" />
-          <span className="flex items-center gap-1 font-mono">SCROLL 滚轮缩放</span>
-        </div>
+        {showGuide && (
+          <div className="absolute top-2 md:top-4 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-slate-900/80 border border-slate-800 rounded-full text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] backdrop-blur flex items-center gap-3 shadow-lg">
+            <span className="flex items-center gap-1"><MousePointer2 size={10} /> 拖拽移动</span>
+            <div className="w-1 h-1 rounded-full bg-slate-700" />
+            <span className="flex items-center gap-1 font-mono">滚轮缩放</span>
+            <button 
+              onClick={() => setShowGuide(false)}
+              className="ml-1 p-0.5 hover:bg-slate-700 rounded-full transition-colors"
+              title="隐藏提示"
+            >
+              <X size={10} />
+            </button>
+          </div>
+        )}
       </main>
     </div>
   );
