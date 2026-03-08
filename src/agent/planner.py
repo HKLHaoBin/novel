@@ -73,6 +73,15 @@ class Planner(BaseAgent):
                 meta={"chapter_num": chapter_num, "step": "filter_context"},
             )
             filtered_context = self.filter_context(context, chapter_num, blueprint)
+            self._publish_progress(
+                context,
+                message=(
+                    f"上下文筛选完成 | 角色{len(filtered_context.get('characters', {}))}"
+                    f" 地点{len(filtered_context.get('locations', {}))}"
+                    f" 关系{len(filtered_context.get('relations', []))}"
+                ),
+                meta={"chapter_num": chapter_num, "step": "context_ready"},
+            )
 
             # 生成章节脉络
             self._publish_progress(
@@ -224,8 +233,18 @@ class Planner(BaseAgent):
 
         # 构建提示
         if chapter_num == 1:
+            self._publish_progress(
+                self._context,
+                message="规划路径：第一章开篇设计",
+                meta={"chapter_num": chapter_num, "plan_mode": "first_chapter"},
+            )
             return await self._plan_first_chapter(filtered_context, ch_blueprint)
         else:
+            self._publish_progress(
+                self._context,
+                message=f"规划路径：后续章节承接第{chapter_num - 1}章",
+                meta={"chapter_num": chapter_num, "plan_mode": "followup_chapter"},
+            )
             return await self._plan_chapter(
                 chapter_num, previous_chapter, filtered_context, ch_blueprint, blueprint
             )
@@ -269,6 +288,15 @@ class Planner(BaseAgent):
 4. 结尾留悬念钩子
 
 请按模板输出第一章脉络（约500字）。"""
+
+        self._publish_progress(
+            self._context,
+            message=(
+                f"第一章规划要素已就绪 | 角色{len(characters)}"
+                f" 地点{len(locations)}"
+            ),
+            meta={"step": "llm_plan_first"},
+        )
 
         return await self._call_llm(
             prompt=user_prompt,
@@ -358,6 +386,15 @@ class Planner(BaseAgent):
 4. 结尾留悬念钩子
 
 请按模板输出第{chapter_num}章脉络（约500字）。"""
+
+        self._publish_progress(
+            self._context,
+            message=(
+                f"后续章节规划要素已就绪 | 角色{len(characters)}"
+                f" 地点{len(locations)} 关系{len(relations)}"
+            ),
+            meta={"step": "llm_plan_followup", "chapter_num": chapter_num},
+        )
 
         return await self._call_llm(
             prompt=user_prompt,

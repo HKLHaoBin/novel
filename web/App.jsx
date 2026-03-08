@@ -172,6 +172,32 @@ function getPreferredAgentName(liveState) {
   return latestEntry?.[0] || 'Writer';
 }
 
+function getAuditDimensionStates(agent) {
+  const dimensions = ['time', 'space', 'character', 'plot', 'world', 'info'];
+  const labels = {
+    time: 'Time',
+    space: 'Space',
+    character: 'Character',
+    plot: 'Plot',
+    world: 'World',
+    info: 'Info',
+  };
+  const recentEvents = agent?.recent_events || [];
+
+  return dimensions.map((dimension) => {
+    const latestEvent = [...recentEvents]
+      .reverse()
+      .find((event) => event?.meta?.dimension === dimension);
+    return {
+      key: dimension,
+      label: labels[dimension],
+      phase: latestEvent?.meta?.phase || 'idle',
+      message: latestEvent?.message || '等待审计',
+      meta: latestEvent?.meta || {},
+    };
+  });
+}
+
 function buildContentFromLive(liveState) {
   if (!liveState?.sections) return INITIAL_CONTENT;
   return {
@@ -715,6 +741,7 @@ export default function App() {
   const maximizedValue = maximizedKey === 'runtime' ? runtimePanel.body : (content[maximizedKey] || '');
   const agentEntries = Object.entries(liveState?.agents || {});
   const selectedAgent = liveState?.agents?.[selectedAgentName] || null;
+  const auditDimensionStates = getAuditDimensionStates(selectedAgent);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden select-none font-sans">
@@ -923,6 +950,44 @@ export default function App() {
                           </div>
                         </div>
                       </div>
+                      {selectedAgentName === 'Auditor' && (
+                        <div className="mb-3">
+                          <div className="mb-2 text-[10px] uppercase tracking-[0.18em] text-slate-500">Audit Dimensions</div>
+                          <div className="grid grid-cols-2 gap-2">
+                            {auditDimensionStates.map((item) => {
+                              const phaseTone = item.phase === 'completed'
+                                ? 'border-emerald-500/30 text-emerald-300'
+                                : item.phase === 'unparsed'
+                                  ? 'border-amber-500/30 text-amber-300'
+                                : item.phase === 'start'
+                                  ? 'border-blue-500/30 text-blue-300'
+                                  : 'border-slate-800 text-slate-400';
+                              return (
+                                <div
+                                  key={item.key}
+                                  className={`rounded-xl border bg-slate-900 px-3 py-2 ${phaseTone}`}
+                                >
+                                  <div className="flex items-center justify-between text-[11px] font-semibold">
+                                    <span>{item.label}</span>
+                                    <span className={`h-2 w-2 rounded-full ${
+                                      item.phase === 'completed'
+                                        ? 'bg-emerald-400'
+                                        : item.phase === 'unparsed'
+                                          ? 'bg-amber-400'
+                                          : item.phase === 'start'
+                                            ? 'bg-blue-400 animate-pulse'
+                                            : 'bg-slate-600'
+                                    }`} />
+                                  </div>
+                                  <div className="mt-1 text-[10px] leading-5">
+                                    {item.message}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                       <textarea
                         readOnly
                         className="flex-1 w-full resize-none rounded-xl border border-slate-800 bg-slate-900 p-3 text-[12px] leading-6 text-slate-300 outline-none"

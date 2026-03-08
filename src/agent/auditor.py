@@ -37,6 +37,56 @@ class Auditor(BaseAgent):
         self.name = self._metadata.get("name", "Auditor")
         self.description = self._metadata.get("description", "")
 
+    def _publish_dimension_progress(
+        self,
+        context: AgentContext,
+        *,
+        dimension: str,
+        phase: str,
+        issues: list[dict] | None = None,
+        raw_result: str = "",
+    ) -> None:
+        dimension_labels = {
+            "time": "时间一致性",
+            "space": "空间一致性",
+            "character": "角色一致性",
+            "plot": "情节一致性",
+            "world": "世界观一致性",
+            "info": "信息一致性",
+        }
+        label = dimension_labels.get(dimension, dimension)
+        if phase == "start":
+            message = f"{label}审计中"
+            meta = {"dimension": dimension, "phase": "start"}
+        elif phase == "unparsed":
+            message = f"{label}未抓取到关键词，需人工复核"
+            meta = {
+                "dimension": dimension,
+                "phase": "unparsed",
+                "raw_excerpt": raw_result[:240],
+            }
+        else:
+            issues = issues or []
+            severe = len([i for i in issues if i.get("severity") == "severe"])
+            medium = len([i for i in issues if i.get("severity") == "medium"])
+            minor = len([i for i in issues if i.get("severity") == "minor"])
+            if not issues:
+                message = f"{label}通过"
+            else:
+                message = (
+                    f"{label}完成"
+                    f" | 严重{severe} 中等{medium} 轻微{minor}"
+                )
+            meta = {
+                "dimension": dimension,
+                "phase": "completed",
+                "issue_count": len(issues),
+                "severe": severe,
+                "medium": medium,
+                "minor": minor,
+            }
+        self._publish_progress(context, message=message, meta=meta)
+
     async def execute(self, context: AgentContext) -> AgentResult:
         """
         执行审计任务
@@ -213,6 +263,11 @@ class Auditor(BaseAgent):
         self, context: AgentContext, content: str, dimension: str
     ) -> list[dict]:
         """单维度审计"""
+        self._publish_dimension_progress(
+            context,
+            dimension=dimension,
+            phase="start",
+        )
         ctx_text = build_quick_reference(context)
 
         dimension_checks = {
@@ -283,8 +338,21 @@ class Auditor(BaseAgent):
 按严重程度标注，定位到具体段落。"""
 
         result = await self._call_llm(prompt, system=self._system_prompt)
-
-        return self._parse_issues(result, dimension)
+        issues = self._parse_issues(result, dimension)
+        if not issues and "✓" not in result and "通过" not in result:
+            self._publish_dimension_progress(
+                context,
+                dimension=dimension,
+                phase="unparsed",
+                raw_result=result,
+            )
+        self._publish_dimension_progress(
+            context,
+            dimension=dimension,
+            phase="completed",
+            issues=issues,
+        )
+        return issues
 
     def _extract_info_reveals(self, previous_chapters: dict) -> str:
         """
