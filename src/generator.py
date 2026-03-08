@@ -22,6 +22,7 @@ from src.agent import (
     Writer,
 )
 from src.core import NovelContext, NovelCoordinator
+from src.core.live import LiveStateStore
 from src.llm import KnowledgeBase, LLMProvider, create_knowledge_base
 
 
@@ -71,6 +72,7 @@ class NovelGenerator:
 
         # 当前小说上下文
         self.novel_ctx: NovelContext | None = None
+        self.live_tracker: LiveStateStore | None = None
 
         # 回调函数
         self._on_progress: Callable[[str, str], None] | None = None
@@ -127,6 +129,7 @@ class NovelGenerator:
         """
         # 创建小说上下文
         self.novel_ctx = self.coordinator.create_novel(title, user_prompt)
+        self.live_tracker = LiveStateStore(self.save_dir, title)
         self.novel_ctx.snapshot.progress.total_chapters = total_chapters
         self.novel_ctx.snapshot.user_guidance = (
             f"共{total_chapters}章，每章约{word_count_per_chapter}字"
@@ -141,6 +144,8 @@ class NovelGenerator:
         )
 
         self._report_progress("created", f"已创建小说《{title}》")
+        if self.live_tracker and self.novel_ctx:
+            self.live_tracker.publish_snapshot(self.novel_ctx)
 
         return self.novel_ctx
 
@@ -226,6 +231,8 @@ class NovelGenerator:
             )
 
             self._report_progress("designed", "架构设计完成")
+            if self.live_tracker:
+                self.live_tracker.publish_snapshot(self.novel_ctx)
         else:
             self._report_progress("error", f"设计失败: {result.error}")
 
@@ -437,6 +444,8 @@ class NovelGenerator:
             content,
             write_result.chapter_title,
         )
+        if self.live_tracker:
+            self.live_tracker.publish_snapshot(self.novel_ctx)
 
         # 更新知识库
         if self.knowledge:
@@ -516,6 +525,9 @@ class NovelGenerator:
             小说上下文
         """
         self.novel_ctx = self.coordinator.load_novel(title)
+        if self.novel_ctx:
+            self.live_tracker = LiveStateStore(self.save_dir, title)
+            self.live_tracker.publish_snapshot(self.novel_ctx)
 
         if self.novel_ctx:
             # 恢复小说专属知识库
@@ -562,12 +574,21 @@ class NovelGenerator:
             },
             llm=self.llm,
             knowledge=self.knowledge,
+            live_tracker=self.live_tracker,
         )
 
     def _report_progress(self, stage: str, message: str) -> None:
         """报告进度"""
         if self._on_progress:
             self._on_progress(stage, message)
+        if self.live_tracker:
+            self.live_tracker.publish_progress(
+                stage,
+                message,
+                running=stage not in {"error", "chapter_complete", "designed", "fixed"},
+            )
+            if self.novel_ctx:
+                self.live_tracker.publish_snapshot(self.novel_ctx)
 
     def _build_rewrite_prompt(
         self, original_content: str, issues: list[dict], suggestions: list[str]
@@ -662,6 +683,8 @@ class NovelGenerator:
 
     async def close(self) -> None:
         """关闭生成器"""
+        if self.live_tracker:
+            self.live_tracker.publish_progress("idle", "等待运行", running=False)
         if self.knowledge:
             await self.knowledge.close()
 

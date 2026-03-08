@@ -53,6 +53,7 @@ class AgentContext:
     # LLM 和知识库（新增）
     llm: LLMProviderProtocol | None = None
     knowledge: KnowledgeBaseProtocol | None = None
+    live_tracker: Any | None = None
 
 
 @dataclass
@@ -172,6 +173,40 @@ class BaseAgent:
     def set_llm(self, llm: LLMProviderProtocol) -> None:
         """设置 LLM 提供者"""
         self.llm = llm
+
+    def _publish_start(
+        self,
+        context: AgentContext,
+        *,
+        context_summary: str,
+        prompt: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        if context.live_tracker:
+            context.live_tracker.publish_agent_start(
+                agent_name=self.name,
+                context_summary=context_summary,
+                prompt=prompt,
+                meta=meta,
+            )
+
+    def _publish_result(
+        self,
+        context: AgentContext,
+        *,
+        status: str,
+        output: str = "",
+        error: str = "",
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        if context.live_tracker:
+            context.live_tracker.publish_agent_result(
+                agent_name=self.name,
+                status=status,
+                output=output,
+                error=error,
+                meta=meta,
+            )
 
     def get_prompt(self, context: AgentContext) -> str:
         """

@@ -56,6 +56,15 @@ class Polisher(BaseAgent):
 
         original_word_count = len(content)
         min_word_count = context.extra.get("min_word_count", original_word_count)
+        self._publish_start(
+            context,
+            context_summary=(
+                f"原文字数: {original_word_count}\n"
+                f"最小字数: {min_word_count}"
+            ),
+            prompt=content[:4000],
+            meta={"min_word_count": min_word_count},
+        )
 
         try:
             polished = await self._polish(content, min_word_count)
@@ -64,7 +73,7 @@ class Polisher(BaseAgent):
             polished_count = len(polished)
             if polished_count < min_word_count:
                 # 字数不足，返回原文
-                return AgentResult(
+                result = AgentResult(
                     success=True,
                     content=content,
                     extra={
@@ -78,8 +87,15 @@ class Polisher(BaseAgent):
                         ),
                     },
                 )
+                self._publish_result(
+                    context,
+                    status="completed",
+                    output=result.content[:12000],
+                    meta=result.extra,
+                )
+                return result
 
-            return AgentResult(
+            result = AgentResult(
                 success=True,
                 content=polished,
                 extra={
@@ -87,12 +103,25 @@ class Polisher(BaseAgent):
                     "polished_count": polished_count,
                 },
             )
+            self._publish_result(
+                context,
+                status="completed",
+                output=polished[:12000],
+                meta=result.extra,
+            )
+            return result
 
         except Exception as e:
-            return AgentResult(
+            result = AgentResult(
                 success=False,
                 error=f"润色过程出错: {e!s}",
             )
+            self._publish_result(
+                context,
+                status="failed",
+                error=result.error,
+            )
+            return result
 
     async def _polish(self, content: str, min_word_count: int) -> str:
         """

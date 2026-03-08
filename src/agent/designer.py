@@ -95,10 +95,30 @@ class Designer(BaseAgent):
         # 检查是否是从现有内容构建设计
         existing_content = context.extra.get("existing_content")
         existing_design = context.extra.get("existing_design")
+        prompt_preview = user_input
+        if existing_design:
+            prompt_preview += f"\n\n【现有设计参考】\n{existing_design[:1200]}"
+        self._publish_start(
+            context,
+            context_summary=(
+                f"总章节: {context.extra.get('total_chapters', 20)}\n"
+                f"用户指导:\n{context.extra.get('user_guidance', '')}"
+            ),
+            prompt=prompt_preview[:4000],
+            meta={"mode": "design"},
+        )
         if existing_content:
-            return await self._design_from_content(
+            result = await self._design_from_content(
                 context, existing_content, existing_design
             )
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                error=result.error,
+                meta={"mode": "design_from_content"},
+            )
+            return result
 
         # 检查是否是扩展设计任务
         user_guidance = context.extra.get("user_guidance", "")
@@ -106,18 +126,41 @@ class Designer(BaseAgent):
         is_expand_task = "扩展任务" in user_guidance and global_summary
 
         if is_expand_task:
-            return await self._expand_design(
+            result = await self._expand_design(
                 context, existing_design or "", user_guidance
             )
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                error=result.error,
+                meta={"mode": "expand_design"},
+            )
+            return result
 
         try:
             # 使用工具调用模式进行设计
-            return await self._design_with_tools(context)
+            result = await self._design_with_tools(context)
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                error=result.error,
+                meta={"mode": "tool_call_design"},
+            )
+            return result
         except Exception as e:
-            return AgentResult(
+            result = AgentResult(
                 success=False,
                 error=f"设计过程出错: {e!s}",
             )
+            self._publish_result(
+                context,
+                status="failed",
+                error=result.error,
+                meta={"mode": "tool_call_design"},
+            )
+            return result
 
     async def _design_with_tools(self, context: AgentContext) -> AgentResult:
         """使用工具调用模式构建设计"""

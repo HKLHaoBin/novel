@@ -67,6 +67,16 @@ class Auditor(BaseAgent):
 
         audit_type = context.extra.get("audit_type", "full")
         attempt_count = context.extra.get("attempt_count", 0)
+        self._publish_start(
+            context,
+            context_summary=(
+                f"审计类型: {audit_type}\n"
+                f"修正尝试: {attempt_count}\n"
+                f"待审字数: {len(content)}"
+            ),
+            prompt=content[:4000],
+            meta={"audit_type": audit_type, "attempt_count": attempt_count},
+        )
 
         try:
             if audit_type == "full":
@@ -96,7 +106,7 @@ class Auditor(BaseAgent):
 
             suggestions = self._generate_suggestions(issues)
 
-            return AgentResult(
+            result = AgentResult(
                 success=len(severe_issues) == 0,
                 content=self._format_report(issues, suggestions),
                 issues=issues,
@@ -107,12 +117,30 @@ class Auditor(BaseAgent):
                     "attempt_count": attempt_count,
                 },
             )
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                meta={
+                    "audit_type": audit_type,
+                    "issue_count": len(issues),
+                    "attempt_count": attempt_count,
+                },
+            )
+            return result
 
         except Exception as e:
-            return AgentResult(
+            result = AgentResult(
                 success=False,
                 error=f"审计过程出错: {e!s}",
             )
+            self._publish_result(
+                context,
+                status="failed",
+                error=result.error,
+                meta={"audit_type": audit_type, "attempt_count": attempt_count},
+            )
+            return result
 
     async def _full_audit(self, context: AgentContext, content: str) -> list[dict]:
         """全面审计"""

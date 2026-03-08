@@ -54,6 +54,16 @@ class Planner(BaseAgent):
         chapter_num = context.extra.get("chapter_num", 1)
         previous_chapter = context.extra.get("previous_chapter", "")
         blueprint = context.extra.get("blueprint", {})
+        self._publish_start(
+            context,
+            context_summary=(
+                f"章节: 第{chapter_num}章\n"
+                f"上章长度: {len(previous_chapter)}\n"
+                f"蓝图数量: {len(blueprint) if isinstance(blueprint, dict) else 0}"
+            ),
+            prompt=str(blueprint)[:4000],
+            meta={"chapter_num": chapter_num},
+        )
 
         try:
             # 筛选当前章节相关信息
@@ -67,19 +77,33 @@ class Planner(BaseAgent):
                 blueprint=blueprint,
             )
 
-            return AgentResult(
+            result = AgentResult(
                 success=True,
                 content=outline,
                 chapter_num=chapter_num,
             )
+            self._publish_result(
+                context,
+                status="completed",
+                output=outline[:12000],
+                meta={"chapter_num": chapter_num},
+            )
+            return result
 
         except Exception as e:
             import traceback
 
-            return AgentResult(
+            result = AgentResult(
                 success=False,
                 error=f"规划过程出错: {e!s}\n{traceback.format_exc()}",
             )
+            self._publish_result(
+                context,
+                status="failed",
+                error=result.error,
+                meta={"chapter_num": chapter_num},
+            )
+            return result
 
     def filter_context(
         self, context: AgentContext, chapter_num: int, blueprint: dict
