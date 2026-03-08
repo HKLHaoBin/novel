@@ -121,9 +121,16 @@ class Writer(BaseAgent):
 - query_timeline(): 查询时间轴
 - suggest_next(): 获取下一步建议
 - set_chapter_title(标题): 设置章节标题（建议在开始时调用）
-- complete(content, title): 提交最终内容和标题
+- complete(content, title, end): 提交内容
 
-【重要】完成写作后，必须调用 complete(content, title) 提交你的内容！
+【分段提交机制】（重要！）
+为避免输出截断，请分段提交内容：
+- 每写约2000字，调用 complete(content, title, end=False) 提交一段
+- 最后一段调用 complete(content, title, end=True) 表示章节结束
+- 示例：
+  1. complete("前2000字内容...", "章节标题", end=False)
+  2. complete("中间2000字...", end=False)
+  3. complete("最后部分...", end=True)
 
 【第一章特殊要求】
 1. 开篇黄金500字：建立场景氛围 → 引入主角 → 出现冲突/悬念
@@ -146,8 +153,8 @@ class Writer(BaseAgent):
 【工作流程】
 1. 先调用 set_chapter_title 设置一个独特的章节标题
 2. 使用工具查询必要的角色和设定信息
-3. 撰写章节内容
-4. 调用 complete(content, title) 提交最终内容"""
+3. 开始写作，每约2000字调用 complete(content, title, end=False) 提交一段
+4. 最后一段调用 complete(content, title, end=True) 完成章节"""
 
         # 使用工具调用循环
         tool_loop = ToolCallLoop(
@@ -199,13 +206,22 @@ class Writer(BaseAgent):
 - query_timeline(): 查询时间轴
 - suggest_next(): 获取下一步发展建议
 - set_chapter_title(标题): 设置章节标题（建议在开始时调用）
-- complete(content, title): 提交最终内容和标题
+- complete(content, title, end): 提交内容
+
+【分段提交机制】（重要！）
+为避免输出截断，请分段提交内容：
+- 每写约2000字，调用 complete(content, title, end=False) 提交一段
+- 最后一段调用 complete(content, title, end=True) 表示章节结束
+- 示例：
+  1. complete("前2000字内容...", "章节标题", end=False)
+  2. complete("中间2000字...", end=False)
+  3. complete("最后部分...", end=True)
 
 【强制要求 - 必须按顺序执行】
 1. 首先调用 query_previous_chapter({chapter_num - 1}) 获取上一章完整内容
 2. 调用 set_chapter_title 设置一个独特的章节标题（不要与前面章节重复）
 3. 根据前文内容确保风格、角色、情节连贯
-4. 最后调用 complete(content, title) 提交内容
+4. 分段提交内容，最后一段设置 end=True
 
 【写作要求】
 1. 承接上文：风格统一、自然过渡
@@ -229,8 +245,8 @@ class Writer(BaseAgent):
 步骤1: 调用 query_previous_chapter({chapter_num - 1}) 查看上一章内容
 步骤2: 调用 set_chapter_title 设置一个独特的章节标题
 步骤3: 确认上一章的风格、角色名字、情节发展
-步骤4: 撰写本章内容，确保与前文连贯
-步骤5: 调用 complete(content, title) 提交"""
+步骤4: 开始写作，每约2000字调用 complete(content, title, end=False) 提交一段
+步骤5: 最后一段调用 complete(content, title, end=True) 完成章节"""
 
         # 使用工具调用循环
         tool_loop = ToolCallLoop(

@@ -57,22 +57,33 @@ class Tool:
 # =============== 章节查询工具 ===============
 
 
-def complete(context: Any, content: str = "", title: str = "") -> ToolResult:
+def complete(
+    context: Any, content: str = "", title: str = "", end: bool = True
+) -> ToolResult:
     """
-    完成任务并提交最终内容
+    完成任务并提交内容
+
+    支持分段提交：每约2000字提交一次，避免输出截断。
+    最后一次调用时设置 end=True 表示章节结束。
 
     Args:
         context: AgentContext
-        content: 最终完成的章节内容
-        title: 章节标题（可选，建议提供）
+        content: 本次提交的内容（建议每次2000字左右）
+        title: 章节标题（可选，建议第一次提交时设置）
+        end: 是否是最后一次提交（默认True）
 
     Returns:
-        完成确认
+        完成确认，包含已收集的总字数
     """
     return ToolResult(
         success=True,
-        content="任务已完成",
-        data={"final_content": content, "chapter_title": title, "completed": True},
+        content=f"内容已接收（{'章节完成' if end else '继续写作'}）",
+        data={
+            "segment_content": content,
+            "chapter_title": title,
+            "is_end": end,
+            "completed": end,
+        },
     )
 
 
@@ -1821,14 +1832,15 @@ def get_all_tools(mode: str = "write") -> dict[str, Tool]:
     if mode == "design":
         return get_design_tools()
     return {
-        # 完成工具（必须首先调用以结束任务）
+        # 完成工具（支持分段提交）
         "complete": Tool(
             name="complete",
-            description="完成任务并提交最终内容。当你完成写作后，必须调用此工具提交内容！",
+            description="提交内容。建议每约2000字调用一次（end=False），最后一次 end=True 表示章节结束。",
             tool_type=ToolType.QUERY,
             parameters={
-                "content": "最终完成的章节内容（必填）",
-                "title": "章节标题（可选，如已设置可省略）",
+                "content": "本次提交的内容（建议每次2000字左右）",
+                "title": "章节标题（可选，第一次提交时设置）",
+                "end": "是否是最后一次提交（默认True）",
             },
             execute=complete,
         ),

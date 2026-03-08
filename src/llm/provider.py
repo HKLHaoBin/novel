@@ -125,6 +125,9 @@ class ToolCallLoop:
         self.final_content: str | None = None
         self.chapter_title: str | None = None
         self.mode = mode
+        # 分段内容收集
+        self._content_segments: list[str] = []
+        self._is_completed = False
 
     async def execute_tool(self, name: str, arguments: dict) -> ToolResult:
         """执行单个工具"""
@@ -148,16 +151,36 @@ class ToolCallLoop:
             if self.on_tool_call:
                 self.on_tool_call(name, arguments)
 
-            # 检测 complete/complete_design 调用
-            if name in ("complete", "complete_design") and result.success:
-                # 优先从 result.data 获取（工具放在那里）
-                if result.data and "final_content" in result.data:
-                    self.final_content = result.data["final_content"]
-                    # 同时获取标题
-                    if result.data.get("chapter_title"):
-                        self.chapter_title = result.data["chapter_title"]
+            # 检测 complete 调用（支持分段提交）
+            if name == "complete" and result.success:
+                segment = arguments.get("content", "")
+                title = arguments.get("title", "")
+                is_end = arguments.get("end", True)
+
+                # 收集分段内容
+                if segment:
+                    self._content_segments.append(segment)
+
+                # 收集标题
+                if title:
+                    self.chapter_title = title
+
+                # 如果是最后一段，合并所有内容
+                if is_end:
+                    self.final_content = "".join(self._content_segments)
+                    self._is_completed = True
                 else:
-                    # 回退到从参数获取
+                    # 不是最后一段，返回继续写作的提示
+                    total_len = sum(len(s) for s in self._content_segments)
+                    return ToolResult(
+                        success=True,
+                        content=f"已接收 {len(segment)} 字，累计 {total_len} 字。请继续写作...",
+                        data={
+                            "segment_content": segment,
+                            "total_so_far": total_len,
+                            "is_end": False,
+                        },
+                    )
                     self.final_content = arguments.get("content", "")
                     if arguments.get("title"):
                         self.chapter_title = arguments.get("title")
@@ -299,11 +322,12 @@ class ToolCallLoop:
                     # 执行工具
                     tool_result = await self.execute_tool(tool_name, tool_args)
 
-                    # 检测 complete/complete_design 调用
-                    if (
-                        tool_name in ("complete", "complete_design")
-                        and self.final_content is not None
-                    ):
+                    # 检测 complete 调用完成（end=True）
+                    if tool_name == "complete" and self._is_completed:
+                        return self.final_content or ""
+
+                    # 检测 complete_design 调用
+                    if tool_name == "complete_design" and self.final_content is not None:
                         return self.final_content
 
                     # 添加工具结果消息
