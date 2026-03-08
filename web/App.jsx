@@ -129,11 +129,33 @@ function getStatusLabel(job, liveState) {
   return '云端就绪';
 }
 
-function getWriterHudText(liveState) {
-  const writer = liveState?.agents?.Writer;
-  if (!writer) return '等待 Writer Agent 启动...';
-  if (writer.status === 'failed') return writer.error || 'Writer Agent 执行失败';
-  return writer.output || writer.prompt || writer.context || '等待 Writer Agent 启动...';
+function getRuntimePanelData(liveState) {
+  const agents = Object.entries(liveState?.agents || {});
+  if (agents.length === 0) {
+    return {
+      label: 'WAITING',
+      title: '等待 Agent 启动...',
+      body: '暂无实时消息',
+    };
+  }
+
+  const runningEntry = agents.find(([, agent]) => agent?.status === 'running');
+  const latestEntry = [...agents].sort((a, b) => {
+    const aTime = new Date(a[1]?.updated_at || 0).getTime();
+    const bTime = new Date(b[1]?.updated_at || 0).getTime();
+    return bTime - aTime;
+  })[0];
+
+  const [agentName, agent] = runningEntry || latestEntry;
+  const statusLabel = agent?.status === 'running' ? 'RUNNING' : agent?.status === 'failed' ? 'FAILED' : 'UPDATED';
+  const title = agent?.meta?.chapter_title || agent?.meta?.mode || agent?.name || agentName;
+  const body = agent?.error || agent?.output || agent?.prompt || agent?.context || '暂无实时消息';
+
+  return {
+    label: `${agentName}_${statusLabel}`,
+    title,
+    body,
+  };
 }
 
 function buildContentFromLive(liveState) {
@@ -665,7 +687,7 @@ export default function App() {
     }
   };
 
-  const writerHudText = getWriterHudText(liveState);
+  const runtimePanel = getRuntimePanelData(liveState);
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden select-none font-sans">
@@ -860,14 +882,14 @@ export default function App() {
           </div>
         )}
 
-        <div className="absolute bottom-6 right-6 w-80 bg-slate-900/90 backdrop-blur-2xl border border-blue-500/20 rounded-2xl shadow-2xl z-[150]">
-          <div className="p-3 border-b border-slate-800 flex justify-between items-center px-4">
+        <div className="absolute bottom-6 right-6 z-[150] flex h-[26rem] w-[28rem] max-w-[calc(100vw-3rem)] flex-col rounded-2xl border-2 border-slate-800 bg-slate-900 shadow-2xl shadow-black">
+          <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 px-4 py-3">
             <span className="text-blue-400 font-bold text-[10px] tracking-widest">
-              {job?.running ? 'AGENT_RUNTIME_LIVE' : 'WRITER_AGENT_LIVE'}
+              {job?.running ? runtimePanel.label : 'AGENT_RUNTIME_IDLE'}
             </span>
             <Activity size={12} className={`text-blue-500 ${job?.running ? 'animate-pulse' : ''}`} />
           </div>
-          <div className="p-4 bg-slate-950/50">
+          <div className="flex-1 overflow-hidden bg-slate-950/50 p-4">
             <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
               {selectedTitle || settings.title || '未选择小说'}
             </div>
@@ -885,8 +907,17 @@ export default function App() {
                 Streaming
               </span>
             </div>
-            <div className="h-20 overflow-hidden text-[11px] text-slate-400 italic whitespace-pre-wrap">
-              {writerHudText}
+            <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-2">
+              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
+              <div className="mt-1 text-sm font-semibold text-slate-200">{runtimePanel.title}</div>
+            </div>
+            <textarea
+              readOnly
+              className="h-[15.5rem] w-full resize-none rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[12px] leading-6 text-slate-300 outline-none"
+              value={runtimePanel.body}
+            />
+            <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-slate-600">
+              实时面板优先显示运行中的 Agent，其次显示最近更新的 Agent
             </div>
           </div>
         </div>

@@ -216,13 +216,21 @@ class LiveStateStore:
                 "meta": meta or {},
             },
         )
-        logger.info(
-            "[LIVE][%s] agent_finished name=%s status=%s error=%s",
-            self.title,
-            agent_name,
-            status,
-            error[:200],
-        )
+        if error:
+            logger.info(
+                "[LIVE][%s] agent_finished name=%s status=%s error=%s",
+                self.title,
+                agent_name,
+                status,
+                error[:200],
+            )
+        else:
+            logger.info(
+                "[LIVE][%s] agent_finished name=%s status=%s",
+                self.title,
+                agent_name,
+                status,
+            )
 
     def _build_sections(self, novel_ctx: Any) -> dict[str, str]:
         snapshot = novel_ctx.snapshot
