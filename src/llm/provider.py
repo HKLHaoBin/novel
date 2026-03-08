@@ -216,6 +216,8 @@ class ToolCallLoop:
 
         iteration = 0
         max_retries = 3  # API 调用重试次数
+        consecutive_no_tool_calls = 0
+        best_text_response = ""
 
         while iteration < self.max_iterations:
             iteration += 1
@@ -254,6 +256,7 @@ class ToolCallLoop:
 
             # 检查是否有工具调用
             if response.tool_calls:
+                consecutive_no_tool_calls = 0
                 logger.info(
                     "[ToolLoop] mode=%s iteration=%s tool_calls=%s text_len=%s",
                     self.mode,
@@ -351,6 +354,34 @@ class ToolCallLoop:
             )
             # 重要：必须通过工具提交，不能直接返回 response.text
             if response.text and response.text.strip():
+                consecutive_no_tool_calls += 1
+                candidate_text = response.text.strip()
+                if len(candidate_text) >= len(best_text_response):
+                    best_text_response = candidate_text
+
+                if (
+                    self.mode != "design"
+                    and "complete_design" not in self.tools
+                    and best_text_response
+                    and consecutive_no_tool_calls >= 3
+                ):
+                    logger.warning(
+                        "[ToolLoop] mode=%s iteration=%s auto_complete_after_no_tool_calls=%s text_len=%s",
+                        self.mode,
+                        iteration,
+                        consecutive_no_tool_calls,
+                        len(best_text_response),
+                    )
+                    await self.execute_tool(
+                        "complete",
+                        {
+                            "content": best_text_response,
+                            "title": self.chapter_title or "",
+                        },
+                    )
+                    if self.final_content is not None:
+                        return self.final_content
+
                 # 根据模式给出不同提示
                 if self.mode == "design" or "complete_design" in self.tools:
                     # 设计模式
@@ -377,6 +408,7 @@ class ToolCallLoop:
                 continue
 
             # 完全没有响应，继续循环
+            consecutive_no_tool_calls = 0
             if self.mode == "design" or "complete_design" in self.tools:
                 messages.append(
                     Message.user(
