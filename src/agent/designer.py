@@ -237,6 +237,7 @@ class Designer(BaseAgent):
                 success=result.success,
                 content=result.content,
                 issues=result.issues,
+                data=result.data if isinstance(result.data, dict) else None,
             ),
         )
 
@@ -572,6 +573,7 @@ class Designer(BaseAgent):
                 success=result.success,
                 content=result.content,
                 issues=result.issues,
+                data=result.data if isinstance(result.data, dict) else None,
             ),
         )
 

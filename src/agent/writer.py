@@ -194,6 +194,7 @@ class Writer(BaseAgent):
                 success=r.success,
                 content=r.content,
                 issues=r.issues,
+                data=r.data if isinstance(r.data, dict) else None,
             ),
         )
 
@@ -295,6 +296,7 @@ class Writer(BaseAgent):
                 success=r.success,
                 content=r.content,
                 issues=r.issues,
+                data=r.data if isinstance(r.data, dict) else None,
             ),
         )
 

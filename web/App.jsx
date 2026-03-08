@@ -272,6 +272,7 @@ export default function App() {
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
   const prevLiveRef = useRef(null);
+  const prevCompletedChaptersRef = useRef('');
   const updateTimersRef = useRef({});
   const touchRef = useRef({
     startDist: 0,
@@ -405,6 +406,7 @@ export default function App() {
     if (!selectedTitle) return undefined;
 
     let cancelled = false;
+    prevCompletedChaptersRef.current = '';
     const eventSource = new EventSource(`/api/novels/${encodeURIComponent(selectedTitle)}/events/stream`);
 
     loadLiveState(selectedTitle);
@@ -525,6 +527,14 @@ export default function App() {
 
     prevLiveRef.current = liveState;
   }, [liveState, selectedTitle, settings.title]);
+
+  useEffect(() => {
+    if (!selectedTitle || !liveState) return;
+    const completedSignature = (liveState.overview?.completed_chapters || []).join(',');
+    if (!completedSignature || completedSignature === prevCompletedChaptersRef.current) return;
+    prevCompletedChaptersRef.current = completedSignature;
+    loadChapters(selectedTitle).catch((err) => setError(err.message || '加载章节失败'));
+  }, [liveState, selectedTitle]);
 
   const handleWheel = (e) => {
     if (maximizedKey) return;
@@ -863,6 +873,13 @@ export default function App() {
               {agent?.last_tool_result?.name
                 ? `${agent.last_tool_result.name} / ${agent.last_tool_result.success ? 'ok' : 'failed'}`
                 : '-'}
+            </div>
+            <div className="mt-1 text-[10px] leading-5 text-slate-500">
+              {agent?.last_tool_result?.data?.total_so_far
+                ? `累计 ${agent.last_tool_result.data.total_so_far} 字 / ${
+                    agent.last_tool_result.data.is_end ? '最终段' : '继续'
+                  }`
+                : agent?.last_tool_result?.content || '暂无结果详情'}
             </div>
           </div>
         </div>

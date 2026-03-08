@@ -297,30 +297,61 @@ class LiveStateStore:
         success: bool,
         content: str,
         issues: list[str] | None = None,
+        data: dict[str, Any] | None = None,
     ) -> None:
         state = self.read_state()
         agent = state["agents"].setdefault(agent_name, {"name": agent_name})
+        tool_data = data or {}
+        segment_content = str(tool_data.get("segment_content") or "")
+        total_so_far = tool_data.get("total_so_far")
+        is_end = bool(tool_data.get("is_end", True))
+        chapter_title = tool_data.get("chapter_title") or agent.get("meta", {}).get("chapter_title")
         payload = {
             "name": tool_name,
             "success": success,
             "content": content[:2000],
             "issues": issues or [],
+            "data": tool_data,
             "timestamp": _now(),
         }
+        next_output = agent.get("output", "")
+        next_meta = {**agent.get("meta", {})}
+        next_current_task = f"工具完成 {tool_name}"
+        next_progress = f"工具完成 {tool_name}"
+
+        if tool_name == "complete" and success:
+            if segment_content:
+                next_output = f"{next_output}{segment_content}"
+            if chapter_title:
+                next_meta["chapter_title"] = chapter_title
+            if is_end:
+                next_current_task = "章节分段提交完成"
+                next_progress = "章节分段提交完成"
+            else:
+                total_text = str(total_so_far) if total_so_far is not None else str(len(next_output))
+                next_current_task = f"已提交分段，累计 {total_text} 字"
+                next_progress = next_current_task
+
         agent.update(
             {
                 "name": agent_name,
                 "status": "running",
-                "current_task": f"工具完成 {tool_name}",
-                "progress": f"工具完成 {tool_name}",
+                "current_task": next_current_task,
+                "progress": next_progress,
                 "last_tool_result": payload,
+                "output": next_output,
                 "updated_at": _now(),
+                "meta": next_meta,
             }
         )
         self._push_agent_event(
             agent,
             event_type="tool_result",
-            message=f"工具完成 {tool_name}",
+            message=(
+                f"分段提交完成，累计 {total_so_far if total_so_far is not None else len(next_output)} 字"
+                if tool_name == "complete" and success and not is_end
+                else f"工具完成 {tool_name}"
+            ),
             meta=payload,
         )
         self._write_state(state)
@@ -332,6 +363,7 @@ class LiveStateStore:
                 "success": success,
                 "content": content[:2000],
                 "issues": issues or [],
+                "data": tool_data,
             },
         )
         logger.info(

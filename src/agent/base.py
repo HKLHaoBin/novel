@@ -244,6 +244,7 @@ class BaseAgent:
         success: bool,
         content: str,
         issues: list[str] | None = None,
+        data: dict | None = None,
     ) -> None:
         if context.live_tracker:
             context.live_tracker.publish_tool_result(
@@ -252,6 +253,7 @@ class BaseAgent:
                 success=success,
                 content=content,
                 issues=issues,
+                data=data,
             )
 
     def get_prompt(self, context: AgentContext) -> str:
