@@ -229,6 +229,14 @@ async def _run_generation(settings: WebSettings) -> None:
 
         coordinator = _coordinator(save_dir)
         novel_ctx = coordinator.load_novel(settings.title)
+
+        # Web 中的“强制重设计”应当等价于“从零开始重建当前小说”，
+        # 否则旧章节、旧设计、旧图结构仍会被带入，和用户预期相反。
+        if settings.force_design and novel_ctx:
+            coordinator.state_manager.delete_novel(settings.title)
+            novel_ctx = None
+            job_state.message = "已清空旧数据，准备从零开始重建"
+
         if not novel_ctx:
             await generator.create_novel(
                 title=settings.title,
