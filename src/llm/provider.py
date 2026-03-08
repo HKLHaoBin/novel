@@ -2,9 +2,12 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Protocol
 
 from src.exceptions import convert_intelligence_error
+
+logger = logging.getLogger("novel.tool_loop")
 
 
 class ToolProtocol(Protocol):
@@ -216,6 +219,13 @@ class ToolCallLoop:
 
         while iteration < self.max_iterations:
             iteration += 1
+            logger.info(
+                "[ToolLoop] mode=%s iteration=%s/%s messages=%s",
+                self.mode,
+                iteration,
+                self.max_iterations,
+                len(messages),
+            )
 
             # 调用 LLM（带重试）
             retry_count = 0
@@ -244,6 +254,13 @@ class ToolCallLoop:
 
             # 检查是否有工具调用
             if response.tool_calls:
+                logger.info(
+                    "[ToolLoop] mode=%s iteration=%s tool_calls=%s text_len=%s",
+                    self.mode,
+                    iteration,
+                    len(response.tool_calls),
+                    len(response.text or ""),
+                )
                 # 添加助手消息
                 # 需要将字典格式转换为 ToolCall 对象
                 formatted_tool_calls = []
@@ -297,6 +314,12 @@ class ToolCallLoop:
                         tool_id = getattr(tool_call, "id", "")
 
                     # 执行工具
+                    logger.info(
+                        "[ToolLoop] mode=%s iteration=%s execute_tool name=%s",
+                        self.mode,
+                        iteration,
+                        tool_name,
+                    )
                     tool_result = await self.execute_tool(tool_name, tool_args)
 
                     # 检测 complete/complete_design 调用
@@ -320,6 +343,12 @@ class ToolCallLoop:
                 continue
 
             # 没有工具调用
+            logger.info(
+                "[ToolLoop] mode=%s iteration=%s no_tool_calls text_len=%s",
+                self.mode,
+                iteration,
+                len(response.text or ""),
+            )
             # 重要：必须通过工具提交，不能直接返回 response.text
             if response.text and response.text.strip():
                 # 根据模式给出不同提示
@@ -361,6 +390,11 @@ class ToolCallLoop:
                 )
 
         if iteration >= self.max_iterations:
+            logger.warning(
+                "[ToolLoop] mode=%s reached max_iterations=%s",
+                self.mode,
+                self.max_iterations,
+            )
             # 达到最大迭代次数，要求 LLM 直接提交
             messages.append(
                 Message.user(

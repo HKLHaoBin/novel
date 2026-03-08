@@ -260,7 +260,18 @@ class LiveStateStore:
         timeline_lines = []
         if novel_ctx.timeline and novel_ctx.timeline.points:
             for point in novel_ctx.timeline.get_ordered_points()[:20]:
-                timeline_lines.append(f"{point.name}: {point.description}")
+                point_label = getattr(point, "label", "") or getattr(point, "name", "") or point.id
+                point_desc = ""
+                if hasattr(point, "attrs") and isinstance(point.attrs, dict):
+                    point_desc = (
+                        point.attrs.get("summary")
+                        or point.attrs.get("description")
+                        or point.attrs.get("event")
+                        or ""
+                    )
+                timeline_lines.append(
+                    f"{point_label}: {point_desc}".rstrip(": ")
+                )
 
         seed = extra.get("seed", {})
         outline_lines = []
