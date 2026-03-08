@@ -307,12 +307,12 @@ async def cmd_design(args: argparse.Namespace) -> int:
             if not completed:
                 console.print("[yellow]该小说没有已完成的章节，无法从内容构建设计[/yellow]")
                 return 1
-            
+
             # 读取现有设计（作为参考，不清除）
             if novel_ctx.global_summary:
                 existing_design = novel_ctx.global_summary
                 console.print("[cyan]将参考现有设计主线...[/cyan]")
-            
+
             # 读取已完成章节
             console.print(f"[cyan]正在读取 {len(completed)} 个已完成章节...[/cyan]")
             chapters_content = {}
@@ -322,11 +322,12 @@ async def cmd_design(args: argparse.Namespace) -> int:
                 )
                 if content:
                     chapters_content[ch_num] = content
-            
+
             if chapters_content:
                 existing_content = chapters_content
-                console.print(f"[cyan]将结合现有设计和 {len(chapters_content)} 章内容重构更完整的设计...[/cyan]")
-                # 清除旧设计，准备生成新设计
+                ch_count = len(chapters_content)
+                msg = f"结合现有设计和 {ch_count} 章内容重构..."
+                console.print(f"[cyan]{msg}[/cyan]")
                 novel_ctx.snapshot.global_summary = ""
                 novel_ctx.global_summary = ""
 
@@ -447,19 +448,9 @@ async def cmd_write(args: argparse.Namespace) -> int:
         total = novel_ctx.snapshot.progress.total_chapters
 
         if args.all:
-            # 扫描 drafts/*.novel 检查点文件，找到最大章节号
-            import re
-            from pathlib import Path
-
-            novel_dir = Path("novels") / args.title / "drafts"
-            max_chapter = 0
-            if novel_dir.exists():
-                for f in novel_dir.iterdir():
-                    if f.is_file() and f.suffix == ".novel":
-                        match = re.search(r"第(\d+)章", f.name)
-                        if match:
-                            chapter_num = int(match.group(1))
-                            max_chapter = max(max_chapter, chapter_num)
+            # 从成品章节获取已写章节
+            chapters = generator.coordinator.state_manager.list_chapters(args.title)
+            max_chapter = max((c["chapter_num"] for c in chapters), default=0)
 
             start = max_chapter + 1
             if start > total:
@@ -618,9 +609,12 @@ async def cmd_list(args: argparse.Namespace) -> int:
         table.add_column("状态", style="yellow")
 
         for novel in novels:
-            is_complete = (
-                novel["chapter_count"] >= novel.get("total", 0)
+            total = (
+                novel.get("last_draft", {}).get("total_chapters", 0)
+                if novel.get("last_draft")
+                else 0
             )
+            is_complete = total > 0 and novel["chapter_count"] >= total
             status = "✅ 完成" if is_complete else "📝 写作中"
             table.add_row(
                 novel["title"],

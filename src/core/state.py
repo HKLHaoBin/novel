@@ -301,6 +301,9 @@ class NovelStateManager:
                     "updated_at": data.get("updated_at", ""),
                     "phase": data.get("progress", {}).get("current_phase", ""),
                     "chapter": data.get("progress", {}).get("current_chapter", 0),
+                    "total_chapters": data.get("progress", {}).get(
+                        "total_chapters", 0
+                    ),
                     "size_kb": f.stat().st_size // 1024,
                 }
             )
