@@ -95,6 +95,7 @@ WEB_SETTINGS_PATH = CONFIG_DIR / "web_settings.json"
 
 job_state = JobState()
 job_lock = asyncio.Lock()
+logger = logging.getLogger("novel.web")
 
 
 def _now() -> str:
@@ -198,25 +199,27 @@ def _make_llm_config(settings: WebSettings) -> dict[str, Any]:
 
 async def _run_generation(settings: WebSettings) -> None:
     save_dir = _resolve_save_dir(settings)
-    generator = NovelGenerator(
-        llm_config=_make_llm_config(settings),
-        save_dir=str(save_dir),
-    )
-
-    def on_progress(stage: str, message: str) -> None:
-        job_state.stage = stage
-        job_state.message = message
-
-    generator.on_progress(on_progress)
-    job_state.running = True
-    job_state.title = settings.title
-    job_state.stage = "starting"
-    job_state.message = "准备启动生成任务"
-    job_state.started_at = _now()
-    job_state.finished_at = ""
-    job_state.last_error = ""
+    generator: NovelGenerator | None = None
 
     try:
+        generator = NovelGenerator(
+            llm_config=_make_llm_config(settings),
+            save_dir=str(save_dir),
+        )
+
+        def on_progress(stage: str, message: str) -> None:
+            job_state.stage = stage
+            job_state.message = message
+
+        generator.on_progress(on_progress)
+        job_state.running = True
+        job_state.title = settings.title
+        job_state.stage = "starting"
+        job_state.message = "准备启动生成任务"
+        job_state.started_at = _now()
+        job_state.finished_at = ""
+        job_state.last_error = ""
+
         if not settings.api_key:
             raise RuntimeError("缺少 API Key，请先在设置中填写")
         if not settings.title.strip():
@@ -269,6 +272,7 @@ async def _run_generation(settings: WebSettings) -> None:
         job_state.message = "任务已取消"
         raise
     except Exception as exc:
+        logger.exception("generation task failed for %s", settings.title)
         job_state.stage = "error"
         job_state.message = str(exc)
         job_state.last_error = str(exc)
@@ -277,7 +281,8 @@ async def _run_generation(settings: WebSettings) -> None:
     finally:
         job_state.running = False
         job_state.finished_at = _now()
-        await generator.close()
+        if generator is not None:
+            await generator.close()
 
 
 def _start_background_job(settings: WebSettings) -> None:
