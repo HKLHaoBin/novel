@@ -53,6 +53,16 @@ class Writer(BaseAgent):
         chapter_num = context.extra.get("chapter_num", 1)
         blueprint = context.extra.get("chapter_blueprint", "")
         word_count = context.extra.get("word_count", 3000)
+        self._publish_start(
+            context,
+            context_summary=(
+                f"章节: 第{chapter_num}章\n"
+                f"目标字数: {word_count}\n"
+                f"角色数: {len(context.characters)}"
+            ),
+            prompt=str(blueprint)[:4000],
+            meta={"chapter_num": chapter_num, "word_count": word_count},
+        )
 
         try:
             # 构建基础上下文
@@ -79,20 +89,34 @@ class Writer(BaseAgent):
                 # 回退到从内容提取
                 title = self._extract_title(content, chapter_num)
 
-            return AgentResult(
+            result = AgentResult(
                 success=True,
                 content=content,
                 chapter_num=chapter_num,
                 chapter_title=title,
             )
+            self._publish_result(
+                context,
+                status="completed",
+                output=content[:12000],
+                meta={"chapter_num": chapter_num, "chapter_title": title},
+            )
+            return result
 
         except Exception as e:
             import traceback
 
-            return AgentResult(
+            result = AgentResult(
                 success=False,
                 error=f"写作过程出错: {e!s}\n{traceback.format_exc()}",
             )
+            self._publish_result(
+                context,
+                status="failed",
+                error=result.error,
+                meta={"chapter_num": chapter_num},
+            )
+            return result
 
     async def _write_first_chapter(
         self,
@@ -161,7 +185,16 @@ class Writer(BaseAgent):
             tools=self._tools,
             context=context,
             max_iterations=100,
-            on_tool_call=lambda n, a: print(f"  [工具调用] {n}({a})"),
+            on_tool_call=lambda n, a: self._publish_tool_call(
+                context, tool_name=n, arguments=a
+            ),
+            on_tool_result=lambda n, r: self._publish_tool_result(
+                context,
+                tool_name=n,
+                success=r.success,
+                content=r.content,
+                issues=r.issues,
+            ),
         )
 
         if self.llm is None:
@@ -253,7 +286,16 @@ class Writer(BaseAgent):
             tools=self._tools,
             context=context,
             max_iterations=100,
-            on_tool_call=lambda n, a: print(f"  [工具调用] {n}"),
+            on_tool_call=lambda n, a: self._publish_tool_call(
+                context, tool_name=n, arguments=a
+            ),
+            on_tool_result=lambda n, r: self._publish_tool_result(
+                context,
+                tool_name=n,
+                success=r.success,
+                content=r.content,
+                issues=r.issues,
+            ),
         )
 
         if self.llm is None:

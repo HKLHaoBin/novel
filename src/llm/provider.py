@@ -2,9 +2,12 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Protocol
 
 from src.exceptions import convert_intelligence_error
+
+logger = logging.getLogger("novel.tool_loop")
 
 
 class ToolProtocol(Protocol):
@@ -106,6 +109,7 @@ class ToolCallLoop:
         context: Any,
         max_iterations: int = 10,
         on_tool_call: Callable[[str, dict], None] | None = None,
+        on_tool_result: Callable[[str, ToolResult], None] | None = None,
         mode: str = "write",  # "write" 或 "design"
     ):
         """
@@ -122,6 +126,7 @@ class ToolCallLoop:
         self.context = context
         self.max_iterations = max_iterations
         self.on_tool_call = on_tool_call
+        self.on_tool_result = on_tool_result
         self.final_content: str | None = None
         self.chapter_title: str | None = None
         self.mode = mode
@@ -192,15 +197,20 @@ class ToolCallLoop:
                 elif arguments.get("title"):
                     self.chapter_title = arguments.get("title")
 
+            if self.on_tool_result:
+                self.on_tool_result(name, result)
             return result
         except Exception as e:
             import traceback
 
-            return ToolResult(
+            result = ToolResult(
                 success=False,
                 content=f"工具执行错误: {e!s}",
                 issues=[traceback.format_exc()],
             )
+            if self.on_tool_result:
+                self.on_tool_result(name, result)
+            return result
 
     async def run(
         self,
@@ -236,9 +246,18 @@ class ToolCallLoop:
 
         iteration = 0
         max_retries = 3  # API 调用重试次数
+        consecutive_no_tool_calls = 0
+        best_text_response = ""
 
         while iteration < self.max_iterations:
             iteration += 1
+            logger.info(
+                "[ToolLoop] mode=%s iteration=%s/%s messages=%s",
+                self.mode,
+                iteration,
+                self.max_iterations,
+                len(messages),
+            )
 
             # 调用 LLM（带重试）
             retry_count = 0
@@ -267,6 +286,14 @@ class ToolCallLoop:
 
             # 检查是否有工具调用
             if response.tool_calls:
+                consecutive_no_tool_calls = 0
+                logger.info(
+                    "[ToolLoop] mode=%s iteration=%s tool_calls=%s text_len=%s",
+                    self.mode,
+                    iteration,
+                    len(response.tool_calls),
+                    len(response.text or ""),
+                )
                 # 添加助手消息
                 # 需要将字典格式转换为 ToolCall 对象
                 formatted_tool_calls = []
@@ -320,6 +347,12 @@ class ToolCallLoop:
                         tool_id = getattr(tool_call, "id", "")
 
                     # 执行工具
+                    logger.info(
+                        "[ToolLoop] mode=%s iteration=%s execute_tool name=%s",
+                        self.mode,
+                        iteration,
+                        tool_name,
+                    )
                     tool_result = await self.execute_tool(tool_name, tool_args)
 
                     # 检测 complete 调用完成（end=True）
@@ -344,8 +377,42 @@ class ToolCallLoop:
                 continue
 
             # 没有工具调用
+            logger.info(
+                "[ToolLoop] mode=%s iteration=%s no_tool_calls text_len=%s",
+                self.mode,
+                iteration,
+                len(response.text or ""),
+            )
             # 重要：必须通过工具提交，不能直接返回 response.text
             if response.text and response.text.strip():
+                consecutive_no_tool_calls += 1
+                candidate_text = response.text.strip()
+                if len(candidate_text) >= len(best_text_response):
+                    best_text_response = candidate_text
+
+                if (
+                    self.mode != "design"
+                    and "complete_design" not in self.tools
+                    and best_text_response
+                    and consecutive_no_tool_calls >= 3
+                ):
+                    logger.warning(
+                        "[ToolLoop] mode=%s iteration=%s auto_complete_after_no_tool_calls=%s text_len=%s",
+                        self.mode,
+                        iteration,
+                        consecutive_no_tool_calls,
+                        len(best_text_response),
+                    )
+                    await self.execute_tool(
+                        "complete",
+                        {
+                            "content": best_text_response,
+                            "title": self.chapter_title or "",
+                        },
+                    )
+                    if self.final_content is not None:
+                        return self.final_content
+
                 # 根据模式给出不同提示
                 if self.mode == "design" or "complete_design" in self.tools:
                     # 设计模式
@@ -372,6 +439,7 @@ class ToolCallLoop:
                 continue
 
             # 完全没有响应，继续循环
+            consecutive_no_tool_calls = 0
             if self.mode == "design" or "complete_design" in self.tools:
                 messages.append(
                     Message.user(
@@ -385,6 +453,11 @@ class ToolCallLoop:
                 )
 
         if iteration >= self.max_iterations:
+            logger.warning(
+                "[ToolLoop] mode=%s reached max_iterations=%s",
+                self.mode,
+                self.max_iterations,
+            )
             # 达到最大迭代次数，要求 LLM 直接提交
             messages.append(
                 Message.user(

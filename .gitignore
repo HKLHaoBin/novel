@@ -49,3 +49,4 @@ env/
 .novel/
 AGENTS.md
 web/node_modules
+log/log.log

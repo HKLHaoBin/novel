@@ -69,6 +69,29 @@ class Designer(BaseAgent):
 
 重要：所有设计数据通过工具调用自动结构化存储，无需输出文本格式。"""
 
+    def _publish_design_progress(self, context: AgentContext, tool_name: str) -> None:
+        if not context.live_tracker:
+            return
+
+        tool_labels = {
+            "set_seed": "设置故事核心",
+            "add_character": "添加角色",
+            "add_location": "添加地点",
+            "set_world": "完善世界观",
+            "add_event": "补充关键事件",
+            "add_chapter": "生成章节蓝图",
+            "add_relation": "补充角色关系",
+            "complete_design": "完成设计",
+        }
+        blueprint = context.extra.get("blueprint", {})
+        message = (
+            f"正在设计架构：{tool_labels.get(tool_name, tool_name)}"
+            f" | 角色{len(context.characters)}"
+            f" 地点{len(context.world_map.locations) if context.world_map else 0}"
+            f" 章节{len(blueprint)}"
+        )
+        context.live_tracker.publish_progress("designing", message, running=True)
+
     async def execute(self, context: AgentContext) -> AgentResult:
         """
         执行设计任务（工具调用模式）
@@ -95,10 +118,30 @@ class Designer(BaseAgent):
         # 检查是否是从现有内容构建设计
         existing_content = context.extra.get("existing_content")
         existing_design = context.extra.get("existing_design")
+        prompt_preview = user_input
+        if existing_design:
+            prompt_preview += f"\n\n【现有设计参考】\n{existing_design[:1200]}"
+        self._publish_start(
+            context,
+            context_summary=(
+                f"总章节: {context.extra.get('total_chapters', 20)}\n"
+                f"用户指导:\n{context.extra.get('user_guidance', '')}"
+            ),
+            prompt=prompt_preview[:4000],
+            meta={"mode": "design"},
+        )
         if existing_content:
-            return await self._design_from_content(
+            result = await self._design_from_content(
                 context, existing_content, existing_design
             )
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                error=result.error,
+                meta={"mode": "design_from_content"},
+            )
+            return result
 
         # 检查是否是扩展设计任务
         user_guidance = context.extra.get("user_guidance", "")
@@ -106,18 +149,41 @@ class Designer(BaseAgent):
         is_expand_task = "扩展任务" in user_guidance and global_summary
 
         if is_expand_task:
-            return await self._expand_design(
+            result = await self._expand_design(
                 context, existing_design or "", user_guidance
             )
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                error=result.error,
+                meta={"mode": "expand_design"},
+            )
+            return result
 
         try:
             # 使用工具调用模式进行设计
-            return await self._design_with_tools(context)
+            result = await self._design_with_tools(context)
+            self._publish_result(
+                context,
+                status="completed" if result.success else "failed",
+                output=result.content[:12000],
+                error=result.error,
+                meta={"mode": "tool_call_design"},
+            )
+            return result
         except Exception as e:
-            return AgentResult(
+            result = AgentResult(
                 success=False,
                 error=f"设计过程出错: {e!s}",
             )
+            self._publish_result(
+                context,
+                status="failed",
+                error=result.error,
+                meta={"mode": "tool_call_design"},
+            )
+            return result
 
     async def _design_with_tools(self, context: AgentContext) -> AgentResult:
         """使用工具调用模式构建设计"""
@@ -161,6 +227,17 @@ class Designer(BaseAgent):
             context=context,
             max_iterations=50,  # 设计可能需要更多迭代
             mode="design",  # 设计模式
+            on_tool_call=lambda name, args: (
+                self._publish_tool_call(context, tool_name=name, arguments=args),
+                self._publish_design_progress(context, name),
+            ),
+            on_tool_result=lambda name, result: self._publish_tool_result(
+                context,
+                tool_name=name,
+                success=result.success,
+                content=result.content,
+                issues=result.issues,
+            ),
         )
 
         # 执行工具调用
@@ -485,6 +562,17 @@ class Designer(BaseAgent):
             context=context,
             max_iterations=60,  # 可能需要更多迭代
             mode="design",
+            on_tool_call=lambda name, args: (
+                self._publish_tool_call(context, tool_name=name, arguments=args),
+                self._publish_design_progress(context, name),
+            ),
+            on_tool_result=lambda name, result: self._publish_tool_result(
+                context,
+                tool_name=name,
+                success=result.success,
+                content=result.content,
+                issues=result.issues,
+            ),
         )
 
         # 6. 执行工具调用循环

@@ -350,7 +350,7 @@ class NovelStateManager:
 
         return sorted(
             novels,
-            key=lambda x: x.get("last_draft", {}).get("updated_at", "") or "",
+            key=lambda x: ((x.get("last_draft") or {}).get("updated_at", "") or ""),
             reverse=True,
         )
 
