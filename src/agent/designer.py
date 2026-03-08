@@ -237,6 +237,17 @@ class Designer(BaseAgent):
                 success=result.success,
                 content=result.content,
                 issues=result.issues,
+                data=result.data if isinstance(result.data, dict) else None,
+            ),
+            on_retry_wait=lambda retry, wait, err: self._publish_progress(
+                context,
+                message=f"请求限流或超时，第{retry}次退避等待 {wait} 秒",
+                meta={
+                    "step": "retry_wait",
+                    "retry": retry,
+                    "wait_seconds": wait,
+                    "error": str(err)[:240],
+                },
             ),
         )
 
@@ -572,6 +583,17 @@ class Designer(BaseAgent):
                 success=result.success,
                 content=result.content,
                 issues=result.issues,
+                data=result.data if isinstance(result.data, dict) else None,
+            ),
+            on_retry_wait=lambda retry, wait, err: self._publish_progress(
+                context,
+                message=f"请求限流或超时，第{retry}次退避等待 {wait} 秒",
+                meta={
+                    "step": "retry_wait",
+                    "retry": retry,
+                    "wait_seconds": wait,
+                    "error": str(err)[:240],
+                },
             ),
         )
 

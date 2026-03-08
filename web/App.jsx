@@ -13,6 +13,7 @@ import {
   MessageSquare,
   Minimize2,
   MousePointer2,
+  Pause,
   Play,
   Save,
   Search,
@@ -268,6 +269,7 @@ export default function App() {
   const [banner, setBanner] = useState('');
   const [savingSettings, setSavingSettings] = useState(false);
   const [startingJob, setStartingJob] = useState(false);
+  const [pausingJob, setPausingJob] = useState(false);
   const [updatedSections, setUpdatedSections] = useState({});
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
@@ -815,6 +817,27 @@ export default function App() {
     }
   };
 
+  const pauseJob = async () => {
+    setPausingJob(true);
+    setError('');
+    try {
+      const response = await fetch('/api/job/pause', {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.detail || `暂停失败: ${response.status}`);
+      }
+      setJob(data.job || null);
+      setBanner(data.message || '暂停请求已发送');
+    } catch (err) {
+      setError(err.message || '暂停失败');
+    } finally {
+      setPausingJob(false);
+      window.setTimeout(() => setBanner(''), 1800);
+    }
+  };
+
   const renderAgentPanel = (agentName) => {
     const agent = liveState?.agents?.[agentName] || null;
     const auditDimensionStates = agentName === 'Auditor' ? getAuditDimensionStates(agent) : [];
@@ -965,6 +988,14 @@ export default function App() {
           >
             {startingJob ? <Loader2 size={14} className="animate-spin" /> : <Play size={14} />}
             启动
+          </button>
+          <button
+            onClick={pauseJob}
+            disabled={pausingJob || !job?.running}
+            className="flex items-center gap-2 rounded-lg bg-amber-500 px-3 py-2 text-xs font-bold uppercase tracking-wider text-slate-950 transition hover:bg-amber-400 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            {pausingJob ? <Loader2 size={14} className="animate-spin" /> : <Pause size={14} />}
+            暂停
           </button>
           <button
             onClick={() => setSettingsOpen(true)}
