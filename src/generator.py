@@ -74,7 +74,7 @@ class NovelGenerator:
 
         # 回调函数
         self._on_progress: Callable[[str, str], None] | None = None
-        self._on_chapter_complete: Callable[[int, str], None] | None = None
+        self._on_chapter_complete: Callable[[int, str, str], None] | None = None
 
     def _get_knowledge_db_path(self, title: str) -> str:
         """获取小说专属的知识库路径"""
@@ -102,8 +102,8 @@ class NovelGenerator:
         """设置进度回调"""
         self._on_progress = callback
 
-    def on_chapter_complete(self, callback: Callable[[int, str], None]) -> None:
-        """设置章节完成回调"""
+    def on_chapter_complete(self, callback: Callable[[int, str, str], None]) -> None:
+        """设置章节完成回调（章节号, 内容, 标题）"""
         self._on_chapter_complete = callback
 
     async def create_novel(
@@ -451,7 +451,9 @@ class NovelGenerator:
         self._report_progress("chapter_complete", f"第{chapter_num}章完成")
 
         if self._on_chapter_complete:
-            self._on_chapter_complete(chapter_num, content)
+            self._on_chapter_complete(
+                chapter_num, content, write_result.chapter_title or ""
+            )
 
         return AgentResult(
             success=True,

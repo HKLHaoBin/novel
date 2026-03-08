@@ -613,9 +613,9 @@ async def cmd_write(args: argparse.Namespace) -> int:
             )
 
             # 章节完成回调 - 实时更新进度条
-            def on_chapter_done(ch_num: int, content: str):
+            def on_chapter_done(ch_num: int, content: str, title: str = ""):
                 progress_obj.advance(task)
-                title_display = "无题"
+                title_display = title if title else "无题"
                 content_len = len(content) if content else 0
                 console.print(
                     f"  [green]✓[/green] 第 {ch_num} 章 "
