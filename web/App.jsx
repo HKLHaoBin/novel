@@ -29,6 +29,7 @@ const INITIAL_LAYOUT = {
   plots: { x: 600, y: 600, w: 500, h: 250, color: 'indigo', title: '情节线索', icon: GitBranch },
   map: { x: 1150, y: 400, w: 350, h: 250, color: 'rose', title: '地图结构', icon: MapPin },
   timeline: { x: 1150, y: 700, w: 350, h: 250, color: 'purple', title: '时间轴', icon: Clock },
+  runtime: { x: 1550, y: 120, w: 448, h: 416, color: 'blue', title: '运行面板', icon: Activity },
 };
 
 const INITIAL_CONTENT = {
@@ -39,6 +40,7 @@ const INITIAL_CONTENT = {
   timeline: '',
   map: '',
   guidance: '',
+  runtime: '',
 };
 
 const CARD_STYLES = {
@@ -168,6 +170,7 @@ function buildContentFromLive(liveState) {
     timeline: liveState.sections.timeline || '',
     map: liveState.sections.map || '',
     guidance: liveState.sections.guidance || '',
+    runtime: '',
   };
 }
 
@@ -688,6 +691,7 @@ export default function App() {
   };
 
   const runtimePanel = getRuntimePanelData(liveState);
+  const maximizedValue = maximizedKey === 'runtime' ? runtimePanel.body : (content[maximizedKey] || '');
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden select-none font-sans">
@@ -776,7 +780,7 @@ export default function App() {
             const cardBorderClass = isStreaming
               ? `${color.border} ${color.shadow} ring-2 ring-offset-0 ring-slate-950 ring-white/30`
               : isRunning
-                ? `${color.border} ${color.shadow} animate-pulse`
+                ? `${color.border} ${color.shadow}`
                 : isUpdated
                   ? `${color.border} ${color.shadow} ring-2 ring-offset-0 ring-slate-950 ${color.ring}`
                   : 'border-slate-800 shadow-black';
@@ -795,8 +799,13 @@ export default function App() {
                   zIndex: isRunning || isUpdated || isStreaming ? 50 : 10,
                 }}
               >
+                {isRunning && !isStreaming && (
+                  <div
+                    className={`pointer-events-none absolute inset-0 rounded-2xl border-2 ${color.border} animate-pulse`}
+                  />
+                )}
                 <div
-                  className="p-3 border-b border-slate-800 flex items-center justify-between cursor-move bg-slate-900/50 rounded-t-2xl select-none"
+                  className="p-3 border-b border-slate-800 flex items-center justify-between cursor-move bg-slate-900 rounded-t-2xl select-none"
                   onMouseDown={(e) => startDraggingCard(key, e)}
                   onTouchStart={(e) => handleCardTouchStart(key, e)}
                   onTouchMove={handleCardTouchMove}
@@ -829,12 +838,46 @@ export default function App() {
                 </div>
 
                 <div className="flex-1 overflow-hidden relative">
-                  <textarea
-                    readOnly
-                    className="w-full h-full bg-transparent p-4 text-sm text-slate-300 outline-none resize-none font-sans leading-relaxed scrollbar-hide"
-                    value={content[key] || ''}
-                    placeholder="等待实时数据..."
-                  />
+                  {key === 'runtime' ? (
+                    <div className="flex h-full flex-col bg-slate-900 p-4">
+                      <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
+                        {selectedTitle || settings.title || '未选择小说'}
+                      </div>
+                      <div className="mb-3 flex flex-wrap gap-2 text-[9px] uppercase tracking-[0.18em] text-slate-500">
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
+                          Running
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+                          Updated
+                        </span>
+                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
+                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
+                          Streaming
+                        </span>
+                      </div>
+                      <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-200">{runtimePanel.title}</div>
+                      </div>
+                      <textarea
+                        readOnly
+                        className="flex-1 w-full resize-none rounded-xl border border-slate-800 bg-slate-900 p-3 text-[12px] leading-6 text-slate-300 outline-none"
+                        value={runtimePanel.body}
+                      />
+                      <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-slate-600">
+                        实时面板优先显示运行中的 Agent，其次显示最近更新的 Agent
+                      </div>
+                    </div>
+                  ) : (
+                    <textarea
+                      readOnly
+                      className="w-full h-full bg-transparent p-4 text-sm text-slate-300 outline-none resize-none font-sans leading-relaxed scrollbar-hide"
+                      value={content[key] || ''}
+                      placeholder="等待实时数据..."
+                    />
+                  )}
                 </div>
 
                 <div
@@ -876,51 +919,11 @@ export default function App() {
                 readOnly
                 autoFocus
                 className="flex-1 bg-transparent p-4 md:p-8 lg:p-12 text-base md:text-lg lg:text-xl text-slate-200 outline-none resize-none font-serif leading-relaxed md:leading-loose"
-                value={content[maximizedKey] || ''}
+                value={maximizedValue}
               />
             </div>
           </div>
         )}
-
-        <div className="absolute bottom-6 right-6 z-[150] flex h-[26rem] w-[28rem] max-w-[calc(100vw-3rem)] flex-col rounded-2xl border-2 border-slate-800 bg-slate-900 shadow-2xl shadow-black">
-          <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/50 px-4 py-3">
-            <span className="text-blue-400 font-bold text-[10px] tracking-widest">
-              {job?.running ? runtimePanel.label : 'AGENT_RUNTIME_IDLE'}
-            </span>
-            <Activity size={12} className={`text-blue-500 ${job?.running ? 'animate-pulse' : ''}`} />
-          </div>
-          <div className="flex-1 overflow-hidden bg-slate-950/50 p-4">
-            <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
-              {selectedTitle || settings.title || '未选择小说'}
-            </div>
-            <div className="mb-3 flex flex-wrap gap-2 text-[9px] uppercase tracking-[0.18em] text-slate-500">
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
-                Running
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                Updated
-              </span>
-              <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
-                <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                Streaming
-              </span>
-            </div>
-            <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900/80 px-3 py-2">
-              <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
-              <div className="mt-1 text-sm font-semibold text-slate-200">{runtimePanel.title}</div>
-            </div>
-            <textarea
-              readOnly
-              className="h-[15.5rem] w-full resize-none rounded-xl border border-slate-800 bg-slate-900/60 p-3 text-[12px] leading-6 text-slate-300 outline-none"
-              value={runtimePanel.body}
-            />
-            <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-slate-600">
-              实时面板优先显示运行中的 Agent，其次显示最近更新的 Agent
-            </div>
-          </div>
-        </div>
 
         {showGuide && (
           <div className="absolute top-2 md:top-4 left-1/2 -translate-x-1/2 px-3 py-1.5 bg-slate-900/80 border border-slate-800 rounded-full text-[9px] text-slate-400 font-bold uppercase tracking-[0.2em] backdrop-blur flex items-center gap-3 shadow-lg">
