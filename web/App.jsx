@@ -246,6 +246,30 @@ function persistLayout(layout) {
   }
 }
 
+function hasScrollableAncestor(target, boundary) {
+  if (!(target instanceof Element)) return false;
+
+  let node = target;
+  while (node && node !== boundary) {
+    if (node instanceof HTMLElement) {
+      const style = window.getComputedStyle(node);
+      const overflowY = style.overflowY;
+      const overflowX = style.overflowX;
+      const canScrollY =
+        (overflowY === 'auto' || overflowY === 'scroll') && node.scrollHeight > node.clientHeight;
+      const canScrollX =
+        (overflowX === 'auto' || overflowX === 'scroll') && node.scrollWidth > node.clientWidth;
+
+      if (canScrollY || canScrollX) {
+        return true;
+      }
+    }
+    node = node.parentElement;
+  }
+
+  return false;
+}
+
 export default function App() {
   const [content, setContent] = useState(INITIAL_CONTENT);
   const [layout, setLayout] = useState(() => restoreLayout());
@@ -528,6 +552,7 @@ export default function App() {
 
   const handleWheel = (e) => {
     if (maximizedKey) return;
+    if (hasScrollableAncestor(e.target, canvasRef.current)) return;
     e.preventDefault();
 
     const zoomSpeed = 0.001;
