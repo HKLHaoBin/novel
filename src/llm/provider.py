@@ -197,19 +197,35 @@ class ToolCallLoop:
         messages.append(Message.user(user_prompt))
 
         iteration = 0
+        max_retries = 3  # API 调用重试次数
 
         while iteration < self.max_iterations:
             iteration += 1
 
-            # 调用 LLM
-            response = await generate_text(
-                messages=messages,
-                provider=provider.get_raw_provider(),
-                model=model or provider.model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                tools=tool_definitions if tool_definitions else None,
-            )
+            # 调用 LLM（带重试）
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    response = await generate_text(
+                        messages=messages,
+                        provider=provider.get_raw_provider(),
+                        model=model or provider.model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        tools=tool_definitions if tool_definitions else None,
+                    )
+                    break  # 成功则跳出重试循环
+                except Exception as e:
+                    error_str = str(e).lower()
+                    retry_count += 1
+                    # 400 错误可能是临时问题，尝试重试
+                    if "400" in error_str and retry_count < max_retries:
+                        import asyncio
+
+                        await asyncio.sleep(2**retry_count)  # 指数退避
+                        continue
+                    # 其他错误或重试次数用尽
+                    raise
 
             # 检查是否有工具调用
             if response.tool_calls:
@@ -301,7 +317,7 @@ class ToolCallLoop:
                             "- set_seed(core, conflict, theme, tone) - 设置故事核心\n"
                             "- add_character(name, role, appearances, ...) - 添加角色\n"
                             "- add_location(name, loc_type, chapters, ...) - 添加地点\n"
-                            "- add_chapter(chapter_num, title, characters, locations, ...) - 添加章节\n"
+                            "- add_chapter(num, title, chars, locs, ...) - 添加章节\n"
                             "- complete_design(summary) - 完成设计\n\n"
                             "不要只输出文字描述！必须调用工具来存储设计数据！"
                         )
@@ -319,7 +335,10 @@ class ToolCallLoop:
             # 完全没有响应，继续循环
             if self.mode == "design" or "complete_design" in self.tools:
                 messages.append(
-                    Message.user("请调用设计工具构建设计，完成后调用 complete_design() 提交。")
+                    Message.user(
+                        "请调用设计工具构建设计，"
+                        "完成后调用 complete_design() 提交。"
+                    )
                 )
             else:
                 messages.append(
@@ -335,14 +354,28 @@ class ToolCallLoop:
                     "不要再调用其他工具，直接提交你写好的章节内容。"
                 )
             )
-            response = await generate_text(
-                messages=messages,
-                provider=provider.get_raw_provider(),
-                model=model or provider.model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                tools=tool_definitions if tool_definitions else None,
-            )
+            # 带重试的调用
+            retry_count = 0
+            while retry_count < max_retries:
+                try:
+                    response = await generate_text(
+                        messages=messages,
+                        provider=provider.get_raw_provider(),
+                        model=model or provider.model,
+                        temperature=temperature,
+                        max_tokens=max_tokens,
+                        tools=tool_definitions if tool_definitions else None,
+                    )
+                    break
+                except Exception as e:
+                    error_str = str(e).lower()
+                    retry_count += 1
+                    if "400" in error_str and retry_count < max_retries:
+                        import asyncio
+
+                        await asyncio.sleep(2**retry_count)
+                        continue
+                    raise
             # 检查这次是否调用了 complete
             if response.tool_calls:
                 for tool_call in response.tool_calls:

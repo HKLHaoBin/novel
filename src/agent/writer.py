@@ -140,7 +140,7 @@ class Writer(BaseAgent):
         tool_loop = ToolCallLoop(
             tools=self._tools,
             context=context,
-            max_iterations=5,
+            max_iterations=100,
             on_tool_call=lambda n, a: print(f"  [工具调用] {n}({a})"),
         )
 
@@ -219,7 +219,7 @@ class Writer(BaseAgent):
         tool_loop = ToolCallLoop(
             tools=self._tools,
             context=context,
-            max_iterations=6,
+            max_iterations=100,
             on_tool_call=lambda n, a: print(f"  [工具调用] {n}"),
         )
 

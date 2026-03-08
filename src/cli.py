@@ -465,18 +465,33 @@ async def cmd_write(args: argparse.Namespace) -> int:
                 )
             )
 
-            with Progress(
+            # 用于进度条更新
+            progress_obj = Progress(
                 SpinnerColumn(),
                 TextColumn("[progress.description]{task.description}"),
                 BarColumn(),
                 TaskProgressColumn(),
                 TimeElapsedColumn(),
                 console=console,
-            ) as progress:
-                task = progress.add_task(
-                    "[cyan]写作进度", total=total - start + 1
+            )
+            progress_obj.start()
+            task = progress_obj.add_task(
+                "[cyan]写作进度", total=total - start + 1
+            )
+
+            # 章节完成回调 - 实时更新进度条
+            def on_chapter_done(ch_num: int, content: str):
+                progress_obj.advance(task)
+                title_display = "无题"
+                content_len = len(content) if content else 0
+                console.print(
+                    f"  [green]✓[/green] 第 {ch_num} 章 "
+                    f"「[bold]{title_display}[/bold]」({content_len} 字)"
                 )
 
+            generator.on_chapter_complete(on_chapter_done)
+
+            try:
                 results = await generator.write_all_chapters(
                     start=start,
                     auto_audit=not args.no_audit,
@@ -484,21 +499,22 @@ async def cmd_write(args: argparse.Namespace) -> int:
                 )
 
                 for result in results:
-                    if result.success:
-                        progress.advance(task)
-                        title_display = result.chapter_title or "无题"
-                        content_len = len(result.content) if result.content else 0
+                    if not result.success:
                         console.print(
-                            f"  [green]✓[/green] 第 {result.chapter_num} 章 "
-                            f"「[bold]{title_display}[/bold]」({content_len} 字)"
-                        )
-                    else:
-                        error_msg = (
                             f"  [red]✗[/red] 第 {result.chapter_num} 章"
                             f"失败: {result.error}"
                         )
-                        console.print(error_msg)
+                        progress_obj.stop()
                         return 1
+
+            except KeyboardInterrupt:
+                console.print("\n[yellow]⚠️ 用户中断，正在保存进度...[/yellow]")
+                generator.save_checkpoint()
+                console.print("[green]✓ 进度已保存，可使用 -a 继续写作[/green]")
+                progress_obj.stop()
+                return 130
+            finally:
+                progress_obj.stop()
 
             console.print("\n[green]✅ 批量写作完成![/green]")
         else:
@@ -548,8 +564,33 @@ async def cmd_write(args: argparse.Namespace) -> int:
 
         generator.save_checkpoint()
 
+    except KeyboardInterrupt:
+        console.print("\n[yellow]⚠️ 用户中断[/yellow]")
+        return 130
+    except ConnectionError as e:
+        console.print(f"[red]❌ 网络连接错误: {e}[/red]")
+        console.print("[dim]提示: 请检查网络连接或稍后重试[/dim]")
+        return 1
+    except TimeoutError:
+        console.print("[red]❌ 请求超时[/red]")
+        console.print("[dim]提示: 请检查网络连接或稍后重试[/dim]")
+        return 1
     except Exception as e:
-        print(f"❌ 错误: {e}")
+        error_str = str(e).lower()
+        if "401" in error_str or "unauthorized" in error_str:
+            console.print("[red]❌ API Key 无效或已过期[/red]")
+            console.print("[dim]提示: 请使用 'novel config --api-key' 更新密钥[/dim]")
+        elif "429" in error_str or "rate limit" in error_str:
+            console.print("[red]❌ API 请求频率超限[/red]")
+            console.print("[dim]提示: 请等待几分钟后重试[/dim]")
+        elif "500" in error_str or "502" in error_str or "503" in error_str:
+            console.print("[red]❌ API 服务暂时不可用[/red]")
+            console.print("[dim]提示: 请稍后重试[/dim]")
+        elif "insufficient" in error_str or "quota" in error_str:
+            console.print("[red]❌ API 配额不足[/red]")
+            console.print("[dim]提示: 请检查账户余额[/dim]")
+        else:
+            console.print(f"[red]❌ 错误: {e}[/red]")
         return 1
     finally:
         await generator.close()
