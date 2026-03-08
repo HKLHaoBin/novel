@@ -126,8 +126,8 @@ const AGENT_SECTION_MAP = {
 };
 
 function getStatusLabel(job, liveState) {
-  if (job?.running) return job.message || '运行中';
   if (liveState?.status?.message) return liveState.status.message;
+  if (job?.running) return job.message || '运行中';
   return '云端就绪';
 }
 
@@ -724,9 +724,11 @@ export default function App() {
             <Zap size={20} className="text-blue-500 fill-blue-500" />
             <h1 className="font-black text-sm md:text-lg tracking-tighter">NOVEL_CANVAS</h1>
           </div>
-          <div className="hidden md:flex items-center gap-3 px-3 py-1 bg-slate-950 rounded-full border border-slate-800">
+          <div className="hidden md:flex max-w-[38rem] items-center gap-3 px-3 py-1 bg-slate-950 rounded-full border border-slate-800">
             <div className={`w-2 h-2 rounded-full ${job?.running ? 'bg-blue-500 animate-pulse' : 'bg-emerald-500'}`} />
-            <span className="text-[10px] font-bold text-slate-500 uppercase">{getStatusLabel(job, liveState)}</span>
+            <span className="truncate text-[10px] font-bold text-slate-500" title={getStatusLabel(job, liveState)}>
+              {getStatusLabel(job, liveState)}
+            </span>
           </div>
         </div>
         <div className="flex items-center gap-2 md:gap-4">
@@ -897,6 +899,9 @@ export default function App() {
                         <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
                         <div className="mt-1 text-sm font-semibold text-slate-200">
                           {selectedAgent?.name || runtimePanel.title}
+                        </div>
+                        <div className="mt-2 text-[11px] leading-5 text-slate-500">
+                          {liveState?.status?.message || '暂无阶段消息'}
                         </div>
                         <div className="mt-2 text-[11px] leading-5 text-slate-400">
                           {selectedAgent?.current_task || selectedAgent?.progress || '暂无任务'}
@@ -1168,7 +1173,7 @@ export default function App() {
                     <div className="rounded-2xl border border-slate-800 bg-slate-950 px-4 py-3 text-sm text-slate-300">
                       <div className="mb-2 text-xs uppercase tracking-[0.2em] text-slate-500">后台任务</div>
                       <div>状态: {job.stage || 'idle'}</div>
-                      <div>消息: {job.message || '-'}</div>
+                      <div className="break-words">消息: {liveState?.status?.message || job.message || '-'}</div>
                       <div>运行中: {job.running ? '是' : '否'}</div>
                     </div>
                   )}
