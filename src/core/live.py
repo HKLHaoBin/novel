@@ -76,10 +76,15 @@ class LiveStateStore:
                     "prompt": "",
                     "output": "",
                     "error": "",
+                    "progress": "",
+                    "current_task": "",
                     "updated_at": "",
                     "started_at": "",
                     "finished_at": "",
                     "iteration_count": 0,
+                    "last_tool": {},
+                    "last_tool_result": {},
+                    "recent_events": [],
                     "meta": {},
                 }
                 for name in self.AGENT_NAMES
@@ -165,9 +170,14 @@ class LiveStateStore:
                 "context": context_summary,
                 "prompt": prompt,
                 "error": "",
+                "progress": "Agent 已启动",
+                "current_task": "准备执行",
                 "updated_at": _now(),
                 "started_at": _now(),
                 "iteration_count": agent.get("iteration_count", 0) + 1,
+                "last_tool": {},
+                "last_tool_result": {},
+                "recent_events": [],
                 "meta": meta or {},
             }
         )
@@ -182,6 +192,155 @@ class LiveStateStore:
             },
         )
         logger.info("[LIVE][%s] agent_started name=%s meta=%s", self.title, agent_name, meta or {})
+
+    def _push_agent_event(
+        self,
+        agent: dict[str, Any],
+        *,
+        event_type: str,
+        message: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        recent_events = list(agent.get("recent_events") or [])
+        recent_events.append(
+            {
+                "type": event_type,
+                "message": message,
+                "timestamp": _now(),
+                "meta": meta or {},
+            }
+        )
+        agent["recent_events"] = recent_events[-20:]
+
+    def publish_agent_progress(
+        self,
+        *,
+        agent_name: str,
+        message: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        state = self.read_state()
+        agent = state["agents"].setdefault(agent_name, {"name": agent_name})
+        agent.update(
+            {
+                "name": agent_name,
+                "status": "running",
+                "progress": message,
+                "current_task": message,
+                "updated_at": _now(),
+                "meta": {**agent.get("meta", {}), **(meta or {})},
+            }
+        )
+        self._push_agent_event(
+            agent,
+            event_type="agent_progress",
+            message=message,
+            meta=meta,
+        )
+        self._write_state(state)
+        self._append_event(
+            "agent_progress",
+            {
+                "agent": agent_name,
+                "message": message,
+                "meta": meta or {},
+            },
+        )
+        logger.info("[LIVE][%s] agent_progress name=%s message=%s", self.title, agent_name, message)
+
+    def publish_tool_call(
+        self,
+        *,
+        agent_name: str,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        state = self.read_state()
+        agent = state["agents"].setdefault(agent_name, {"name": agent_name})
+        payload = {
+            "name": tool_name,
+            "arguments": arguments or {},
+            "timestamp": _now(),
+        }
+        agent.update(
+            {
+                "name": agent_name,
+                "status": "running",
+                "current_task": f"调用工具 {tool_name}",
+                "progress": f"调用工具 {tool_name}",
+                "last_tool": payload,
+                "updated_at": _now(),
+            }
+        )
+        self._push_agent_event(
+            agent,
+            event_type="tool_called",
+            message=f"调用工具 {tool_name}",
+            meta=payload,
+        )
+        self._write_state(state)
+        self._append_event(
+            "tool_called",
+            {
+                "agent": agent_name,
+                "tool": tool_name,
+                "arguments": arguments or {},
+            },
+        )
+        logger.info("[LIVE][%s] tool_called agent=%s tool=%s", self.title, agent_name, tool_name)
+
+    def publish_tool_result(
+        self,
+        *,
+        agent_name: str,
+        tool_name: str,
+        success: bool,
+        content: str,
+        issues: list[str] | None = None,
+    ) -> None:
+        state = self.read_state()
+        agent = state["agents"].setdefault(agent_name, {"name": agent_name})
+        payload = {
+            "name": tool_name,
+            "success": success,
+            "content": content[:2000],
+            "issues": issues or [],
+            "timestamp": _now(),
+        }
+        agent.update(
+            {
+                "name": agent_name,
+                "status": "running",
+                "current_task": f"工具完成 {tool_name}",
+                "progress": f"工具完成 {tool_name}",
+                "last_tool_result": payload,
+                "updated_at": _now(),
+            }
+        )
+        self._push_agent_event(
+            agent,
+            event_type="tool_result",
+            message=f"工具完成 {tool_name}",
+            meta=payload,
+        )
+        self._write_state(state)
+        self._append_event(
+            "tool_result",
+            {
+                "agent": agent_name,
+                "tool": tool_name,
+                "success": success,
+                "content": content[:2000],
+                "issues": issues or [],
+            },
+        )
+        logger.info(
+            "[LIVE][%s] tool_result agent=%s tool=%s success=%s",
+            self.title,
+            agent_name,
+            tool_name,
+            success,
+        )
 
     def publish_agent_result(
         self,
@@ -200,10 +359,18 @@ class LiveStateStore:
                 "status": status,
                 "output": output,
                 "error": error,
+                "progress": "执行完成" if status == "completed" else error[:200],
+                "current_task": "执行完成" if status == "completed" else "执行失败",
                 "updated_at": _now(),
                 "finished_at": _now(),
                 "meta": meta or agent.get("meta", {}),
             }
+        )
+        self._push_agent_event(
+            agent,
+            event_type="agent_finished",
+            message="执行完成" if status == "completed" else f"执行失败: {error[:120]}",
+            meta=meta,
         )
         self._write_state(state)
         self._append_event(

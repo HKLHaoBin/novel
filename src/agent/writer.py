@@ -178,7 +178,16 @@ class Writer(BaseAgent):
             tools=self._tools,
             context=context,
             max_iterations=100,
-            on_tool_call=lambda n, a: print(f"  [工具调用] {n}({a})"),
+            on_tool_call=lambda n, a: self._publish_tool_call(
+                context, tool_name=n, arguments=a
+            ),
+            on_tool_result=lambda n, r: self._publish_tool_result(
+                context,
+                tool_name=n,
+                success=r.success,
+                content=r.content,
+                issues=r.issues,
+            ),
         )
 
         if self.llm is None:
@@ -261,7 +270,16 @@ class Writer(BaseAgent):
             tools=self._tools,
             context=context,
             max_iterations=100,
-            on_tool_call=lambda n, a: print(f"  [工具调用] {n}"),
+            on_tool_call=lambda n, a: self._publish_tool_call(
+                context, tool_name=n, arguments=a
+            ),
+            on_tool_result=lambda n, r: self._publish_tool_result(
+                context,
+                tool_name=n,
+                success=r.success,
+                content=r.content,
+                issues=r.issues,
+            ),
         )
 
         if self.llm is None:

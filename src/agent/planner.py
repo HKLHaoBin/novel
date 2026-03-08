@@ -67,9 +67,19 @@ class Planner(BaseAgent):
 
         try:
             # 筛选当前章节相关信息
+            self._publish_progress(
+                context,
+                message=f"正在筛选第{chapter_num}章相关上下文",
+                meta={"chapter_num": chapter_num, "step": "filter_context"},
+            )
             filtered_context = self.filter_context(context, chapter_num, blueprint)
 
             # 生成章节脉络
+            self._publish_progress(
+                context,
+                message=f"正在生成第{chapter_num}章章节脉络",
+                meta={"chapter_num": chapter_num, "step": "generate_outline"},
+            )
             outline = await self._generate_outline(
                 chapter_num=chapter_num,
                 previous_chapter=previous_chapter,

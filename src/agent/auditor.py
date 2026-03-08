@@ -80,10 +80,25 @@ class Auditor(BaseAgent):
 
         try:
             if audit_type == "full":
+                self._publish_progress(
+                    context,
+                    message="正在执行六维一致性审计",
+                    meta={"audit_type": audit_type, "step": "full_audit"},
+                )
                 issues = await self._full_audit(context, content)
             elif audit_type == "quick":
+                self._publish_progress(
+                    context,
+                    message="正在执行快速审计",
+                    meta={"audit_type": audit_type, "step": "quick_audit"},
+                )
                 issues = await self._quick_audit(context, content)
             else:
+                self._publish_progress(
+                    context,
+                    message=f"正在执行 {audit_type} 维度审计",
+                    meta={"audit_type": audit_type, "step": "single_dimension"},
+                )
                 issues = await self._single_dimension_audit(
                     context, content, audit_type
                 )
@@ -102,6 +117,11 @@ class Auditor(BaseAgent):
                 needs_rewrite = True
             elif minor_issues and not medium_issues:
                 # 只有轻微问题，尝试自动修正
+                self._publish_progress(
+                    context,
+                    message="正在自动修正轻微问题",
+                    meta={"audit_type": audit_type, "step": "auto_fix"},
+                )
                 fixed_content = await self._auto_fix(content, minor_issues)
 
             suggestions = self._generate_suggestions(issues)

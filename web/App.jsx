@@ -160,6 +160,18 @@ function getRuntimePanelData(liveState) {
   };
 }
 
+function getPreferredAgentName(liveState) {
+  const agents = Object.entries(liveState?.agents || {});
+  const runningEntry = agents.find(([, agent]) => agent?.status === 'running');
+  if (runningEntry) return runningEntry[0];
+  const latestEntry = [...agents].sort((a, b) => {
+    const aTime = new Date(a[1]?.updated_at || 0).getTime();
+    const bTime = new Date(b[1]?.updated_at || 0).getTime();
+    return bTime - aTime;
+  })[0];
+  return latestEntry?.[0] || 'Writer';
+}
+
 function buildContentFromLive(liveState) {
   if (!liveState?.sections) return INITIAL_CONTENT;
   return {
@@ -195,6 +207,7 @@ export default function App() {
   const [savingSettings, setSavingSettings] = useState(false);
   const [startingJob, setStartingJob] = useState(false);
   const [updatedSections, setUpdatedSections] = useState({});
+  const [selectedAgentName, setSelectedAgentName] = useState('Writer');
   const dragRef = useRef(null);
   const canvasRef = useRef(null);
   const prevLiveRef = useRef(null);
@@ -226,6 +239,14 @@ export default function App() {
       Object.values(updateTimersRef.current).forEach((timer) => window.clearTimeout(timer));
     };
   }, []);
+
+  useEffect(() => {
+    const preferredAgent = getPreferredAgentName(liveState);
+    const currentAgent = liveState?.agents?.[selectedAgentName];
+    if (!currentAgent && preferredAgent && preferredAgent !== selectedAgentName) {
+      setSelectedAgentName(preferredAgent);
+    }
+  }, [liveState, selectedAgentName]);
 
   const refreshNovels = async (preferredTitle = '') => {
     const response = await fetch('/api/novels');
@@ -692,6 +713,8 @@ export default function App() {
 
   const runtimePanel = getRuntimePanelData(liveState);
   const maximizedValue = maximizedKey === 'runtime' ? runtimePanel.body : (content[maximizedKey] || '');
+  const agentEntries = Object.entries(liveState?.agents || {});
+  const selectedAgent = liveState?.agents?.[selectedAgentName] || null;
 
   return (
     <div className="flex flex-col h-screen w-full bg-slate-950 text-slate-200 overflow-hidden select-none font-sans">
@@ -843,31 +866,82 @@ export default function App() {
                       <div className="mb-2 text-[10px] uppercase tracking-[0.2em] text-slate-600">
                         {selectedTitle || settings.title || '未选择小说'}
                       </div>
-                      <div className="mb-3 flex flex-wrap gap-2 text-[9px] uppercase tracking-[0.18em] text-slate-500">
-                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
-                          <span className="h-1.5 w-1.5 rounded-full bg-blue-500 animate-ping" />
-                          Running
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
-                          <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                          Updated
-                        </span>
-                        <span className="inline-flex items-center gap-1 rounded-full border border-slate-800 px-2 py-1">
-                          <span className="h-1.5 w-1.5 rounded-full bg-cyan-400 animate-pulse" />
-                          Streaming
-                        </span>
+                      <div className="mb-3 grid grid-cols-2 gap-2">
+                        {agentEntries.map(([agentName, agent]) => {
+                          const isSelected = agentName === selectedAgentName;
+                          const isRunningAgent = agent?.status === 'running';
+                          const statusTone = agent?.status === 'failed'
+                            ? 'text-rose-300 border-rose-500/30'
+                            : isRunningAgent
+                              ? 'text-blue-300 border-blue-500/30'
+                              : 'text-slate-300 border-slate-800';
+                          return (
+                            <button
+                              key={agentName}
+                              type="button"
+                              onClick={() => setSelectedAgentName(agentName)}
+                              className={`rounded-xl border px-3 py-2 text-left transition ${statusTone} ${isSelected ? 'bg-slate-800' : 'bg-slate-900 hover:bg-slate-800/80'}`}
+                            >
+                              <div className="flex items-center justify-between text-[11px] font-semibold">
+                                <span>{agentName}</span>
+                                <span className={`h-2 w-2 rounded-full ${agent?.status === 'failed' ? 'bg-rose-400' : isRunningAgent ? 'bg-blue-400 animate-pulse' : 'bg-slate-600'}`} />
+                              </div>
+                              <div className="mt-1 text-[10px] uppercase tracking-[0.18em] opacity-80">
+                                {agent?.status || 'idle'}
+                              </div>
+                            </button>
+                          );
+                        })}
                       </div>
                       <div className="mb-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
                         <div className="text-[10px] uppercase tracking-[0.2em] text-slate-500">当前焦点</div>
-                        <div className="mt-1 text-sm font-semibold text-slate-200">{runtimePanel.title}</div>
+                        <div className="mt-1 text-sm font-semibold text-slate-200">
+                          {selectedAgent?.name || runtimePanel.title}
+                        </div>
+                        <div className="mt-2 text-[11px] leading-5 text-slate-400">
+                          {selectedAgent?.current_task || selectedAgent?.progress || '暂无任务'}
+                        </div>
+                      </div>
+                      <div className="mb-3 grid grid-cols-2 gap-2 text-[10px] text-slate-400">
+                        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                          <div className="uppercase tracking-[0.18em] text-slate-500">Last Tool</div>
+                          <div className="mt-1 break-all text-slate-300">
+                            {selectedAgent?.last_tool?.name || '-'}
+                          </div>
+                        </div>
+                        <div className="rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                          <div className="uppercase tracking-[0.18em] text-slate-500">Tool Result</div>
+                          <div className="mt-1 break-all text-slate-300">
+                            {selectedAgent?.last_tool_result?.name
+                              ? `${selectedAgent.last_tool_result.name} / ${selectedAgent.last_tool_result.success ? 'ok' : 'failed'}`
+                              : '-'}
+                          </div>
+                        </div>
                       </div>
                       <textarea
                         readOnly
                         className="flex-1 w-full resize-none rounded-xl border border-slate-800 bg-slate-900 p-3 text-[12px] leading-6 text-slate-300 outline-none"
-                        value={runtimePanel.body}
+                        value={
+                          selectedAgent?.error
+                          || selectedAgent?.output
+                          || selectedAgent?.prompt
+                          || selectedAgent?.context
+                          || runtimePanel.body
+                        }
                       />
-                      <div className="mt-2 text-[10px] uppercase tracking-[0.18em] text-slate-600">
-                        实时面板优先显示运行中的 Agent，其次显示最近更新的 Agent
+                      <div className="mt-3 rounded-xl border border-slate-800 bg-slate-900 px-3 py-2">
+                        <div className="text-[10px] uppercase tracking-[0.18em] text-slate-500">Recent Events</div>
+                        <div className="mt-2 space-y-2">
+                          {(selectedAgent?.recent_events || []).slice(-4).reverse().map((event, index) => (
+                            <div key={`${event.timestamp}-${index}`} className="text-[11px] leading-5 text-slate-400">
+                              <span className="mr-2 uppercase tracking-[0.16em] text-slate-500">{event.type}</span>
+                              <span>{event.message}</span>
+                            </div>
+                          ))}
+                          {(!selectedAgent?.recent_events || selectedAgent.recent_events.length === 0) && (
+                            <div className="text-[11px] text-slate-500">暂无事件</div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   ) : (

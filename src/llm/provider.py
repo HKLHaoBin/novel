@@ -109,6 +109,7 @@ class ToolCallLoop:
         context: Any,
         max_iterations: int = 10,
         on_tool_call: Callable[[str, dict], None] | None = None,
+        on_tool_result: Callable[[str, ToolResult], None] | None = None,
         mode: str = "write",  # "write" 或 "design"
     ):
         """
@@ -125,6 +126,7 @@ class ToolCallLoop:
         self.context = context
         self.max_iterations = max_iterations
         self.on_tool_call = on_tool_call
+        self.on_tool_result = on_tool_result
         self.final_content: str | None = None
         self.chapter_title: str | None = None
         self.mode = mode
@@ -172,15 +174,20 @@ class ToolCallLoop:
                 elif arguments.get("title"):
                     self.chapter_title = arguments.get("title")
 
+            if self.on_tool_result:
+                self.on_tool_result(name, result)
             return result
         except Exception as e:
             import traceback
 
-            return ToolResult(
+            result = ToolResult(
                 success=False,
                 content=f"工具执行错误: {e!s}",
                 issues=[traceback.format_exc()],
             )
+            if self.on_tool_result:
+                self.on_tool_result(name, result)
+            return result
 
     async def run(
         self,

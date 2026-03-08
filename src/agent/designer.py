@@ -69,6 +69,29 @@ class Designer(BaseAgent):
 
 重要：所有设计数据通过工具调用自动结构化存储，无需输出文本格式。"""
 
+    def _publish_design_progress(self, context: AgentContext, tool_name: str) -> None:
+        if not context.live_tracker:
+            return
+
+        tool_labels = {
+            "set_seed": "设置故事核心",
+            "add_character": "添加角色",
+            "add_location": "添加地点",
+            "set_world": "完善世界观",
+            "add_event": "补充关键事件",
+            "add_chapter": "生成章节蓝图",
+            "add_relation": "补充角色关系",
+            "complete_design": "完成设计",
+        }
+        blueprint = context.extra.get("blueprint", {})
+        message = (
+            f"正在设计架构：{tool_labels.get(tool_name, tool_name)}"
+            f" | 角色{len(context.characters)}"
+            f" 地点{len(context.world_map.locations) if context.world_map else 0}"
+            f" 章节{len(blueprint)}"
+        )
+        context.live_tracker.publish_progress("designing", message, running=True)
+
     async def execute(self, context: AgentContext) -> AgentResult:
         """
         执行设计任务（工具调用模式）
@@ -204,6 +227,17 @@ class Designer(BaseAgent):
             context=context,
             max_iterations=50,  # 设计可能需要更多迭代
             mode="design",  # 设计模式
+            on_tool_call=lambda name, args: (
+                self._publish_tool_call(context, tool_name=name, arguments=args),
+                self._publish_design_progress(context, name),
+            ),
+            on_tool_result=lambda name, result: self._publish_tool_result(
+                context,
+                tool_name=name,
+                success=result.success,
+                content=result.content,
+                issues=result.issues,
+            ),
         )
 
         # 执行工具调用
@@ -528,6 +562,17 @@ class Designer(BaseAgent):
             context=context,
             max_iterations=60,  # 可能需要更多迭代
             mode="design",
+            on_tool_call=lambda name, args: (
+                self._publish_tool_call(context, tool_name=name, arguments=args),
+                self._publish_design_progress(context, name),
+            ),
+            on_tool_result=lambda name, result: self._publish_tool_result(
+                context,
+                tool_name=name,
+                success=result.success,
+                content=result.content,
+                issues=result.issues,
+            ),
         )
 
         # 6. 执行工具调用循环

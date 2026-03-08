@@ -67,11 +67,21 @@ class Polisher(BaseAgent):
         )
 
         try:
+            self._publish_progress(
+                context,
+                message="正在执行文笔润色",
+                meta={"step": "polish", "min_word_count": min_word_count},
+            )
             polished = await self._polish(content, min_word_count)
 
             # 验证字数
             polished_count = len(polished)
             if polished_count < min_word_count:
+                self._publish_progress(
+                    context,
+                    message="润色结果字数不足，回退到原文",
+                    meta={"step": "fallback_to_original", "polished_count": polished_count},
+                )
                 # 字数不足，返回原文
                 result = AgentResult(
                     success=True,

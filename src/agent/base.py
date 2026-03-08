@@ -208,6 +208,52 @@ class BaseAgent:
                 meta=meta,
             )
 
+    def _publish_progress(
+        self,
+        context: AgentContext,
+        *,
+        message: str,
+        meta: dict[str, Any] | None = None,
+    ) -> None:
+        if context.live_tracker:
+            context.live_tracker.publish_agent_progress(
+                agent_name=self.name,
+                message=message,
+                meta=meta,
+            )
+
+    def _publish_tool_call(
+        self,
+        context: AgentContext,
+        *,
+        tool_name: str,
+        arguments: dict[str, Any] | None = None,
+    ) -> None:
+        if context.live_tracker:
+            context.live_tracker.publish_tool_call(
+                agent_name=self.name,
+                tool_name=tool_name,
+                arguments=arguments,
+            )
+
+    def _publish_tool_result(
+        self,
+        context: AgentContext,
+        *,
+        tool_name: str,
+        success: bool,
+        content: str,
+        issues: list[str] | None = None,
+    ) -> None:
+        if context.live_tracker:
+            context.live_tracker.publish_tool_result(
+                agent_name=self.name,
+                tool_name=tool_name,
+                success=success,
+                content=content,
+                issues=issues,
+            )
+
     def get_prompt(self, context: AgentContext) -> str:
         """
         获取提示词（子类可重写）
