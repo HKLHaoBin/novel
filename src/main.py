@@ -58,6 +58,7 @@ class JobState:
         self.started_at = ""
         self.finished_at = ""
         self.last_error = ""
+        self.pause_requested = False
         self.task: asyncio.Task | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -69,6 +70,7 @@ class JobState:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "last_error": self.last_error,
+            "pause_requested": self.pause_requested,
         }
 
 
@@ -219,6 +221,7 @@ async def _run_generation(settings: WebSettings) -> None:
         job_state.started_at = _now()
         job_state.finished_at = ""
         job_state.last_error = ""
+        job_state.pause_requested = False
 
         if not settings.api_key:
             raise RuntimeError("缺少 API Key，请先在设置中填写")
@@ -276,8 +279,15 @@ async def _run_generation(settings: WebSettings) -> None:
         job_state.stage = "completed"
         job_state.message = "生成任务完成"
     except asyncio.CancelledError:
-        job_state.stage = "cancelled"
-        job_state.message = "任务已取消"
+        live_store = _get_live_store(settings.title, save_dir)
+        if job_state.pause_requested:
+            job_state.stage = "paused"
+            job_state.message = "任务已暂停"
+            live_store.publish_progress("paused", "任务已暂停", running=False)
+        else:
+            job_state.stage = "cancelled"
+            job_state.message = "任务已取消"
+            live_store.publish_progress("cancelled", "任务已取消", running=False)
         raise
     except Exception as exc:
         logger.exception("generation task failed for %s", settings.title)
@@ -289,6 +299,7 @@ async def _run_generation(settings: WebSettings) -> None:
     finally:
         job_state.running = False
         job_state.finished_at = _now()
+        job_state.task = None
         if generator is not None:
             await generator.close()
 
@@ -344,6 +355,23 @@ async def start_job(payload: StartJobPayload):
     return {
         "ok": True,
         "message": "生成任务已启动",
+        "job": job_state.to_dict(),
+    }
+
+
+@app.post("/api/job/pause")
+async def pause_job():
+    task = job_state.task
+    if not job_state.running or task is None:
+        raise HTTPException(status_code=409, detail="当前没有正在运行的任务")
+
+    job_state.pause_requested = True
+    job_state.stage = "pausing"
+    job_state.message = "正在暂停任务"
+    task.cancel()
+    return {
+        "ok": True,
+        "message": "暂停请求已发送",
         "job": job_state.to_dict(),
     }
 

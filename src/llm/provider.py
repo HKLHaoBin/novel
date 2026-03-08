@@ -1,5 +1,6 @@
 """LLM 提供者适配层 - 封装 intelligence 库"""
 
+import asyncio
 from collections.abc import Callable
 from dataclasses import dataclass, field
 import logging
@@ -110,6 +111,7 @@ class ToolCallLoop:
         max_iterations: int = 10,
         on_tool_call: Callable[[str, dict], None] | None = None,
         on_tool_result: Callable[[str, ToolResult], None] | None = None,
+        on_retry_wait: Callable[[int, int, Exception], None] | None = None,
         mode: str = "write",  # "write" 或 "design"
     ):
         """
@@ -127,12 +129,73 @@ class ToolCallLoop:
         self.max_iterations = max_iterations
         self.on_tool_call = on_tool_call
         self.on_tool_result = on_tool_result
+        self.on_retry_wait = on_retry_wait
         self.final_content: str | None = None
         self.chapter_title: str | None = None
         self.mode = mode
         # 分段内容收集
         self._content_segments: list[str] = []
         self._is_completed = False
+
+    @staticmethod
+    def _is_retryable_error(error: Exception) -> bool:
+        error_str = str(error).lower()
+        markers = (
+            "429",
+            "rate limit",
+            "rate_limit",
+            "too many requests",
+            "timeout",
+            "timed out",
+            "temporarily unavailable",
+            "connection reset",
+            "connection aborted",
+            "service unavailable",
+            "502",
+            "503",
+            "504",
+        )
+        return any(marker in error_str for marker in markers)
+
+    async def _generate_with_backoff(
+        self,
+        *,
+        messages: list[Message],
+        provider: ProviderProtocol,
+        model: str,
+        temperature: float,
+        max_tokens: int,
+        tools: list[dict[str, Any]] | None,
+    ) -> Any:
+        retry_count = 0
+        max_delay = 300
+
+        while True:
+            try:
+                return await generate_text(
+                    messages=messages,
+                    provider=provider.get_raw_provider(),
+                    model=model or provider.model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    tools=tools,
+                )
+            except Exception as e:
+                if not self._is_retryable_error(e):
+                    raise
+
+                retry_count += 1
+                wait_seconds = min(2 ** min(retry_count, 8), max_delay)
+                logger.warning(
+                    "[ToolLoop] mode=%s retryable_error retry=%s wait=%ss error=%s",
+                    self.mode,
+                    retry_count,
+                    wait_seconds,
+                    str(e)[:240],
+                )
+                if self.on_retry_wait:
+                    self.on_retry_wait(retry_count, wait_seconds, e)
+                await asyncio.sleep(wait_seconds)
 
     async def execute_tool(self, name: str, arguments: dict) -> ToolResult:
         """执行单个工具"""
@@ -245,7 +308,6 @@ class ToolCallLoop:
         messages.append(Message.user(user_prompt))
 
         iteration = 0
-        max_retries = 3  # API 调用重试次数
         consecutive_no_tool_calls = 0
         best_text_response = ""
 
@@ -259,30 +321,14 @@ class ToolCallLoop:
                 len(messages),
             )
 
-            # 调用 LLM（带重试）
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    response = await generate_text(
-                        messages=messages,
-                        provider=provider.get_raw_provider(),
-                        model=model or provider.model,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        tools=tool_definitions if tool_definitions else None,
-                    )
-                    break  # 成功则跳出重试循环
-                except Exception as e:
-                    error_str = str(e).lower()
-                    retry_count += 1
-                    # 400 错误可能是临时问题，尝试重试
-                    if "400" in error_str and retry_count < max_retries:
-                        import asyncio
-
-                        await asyncio.sleep(2**retry_count)  # 指数退避
-                        continue
-                    # 其他错误或重试次数用尽
-                    raise
+            response = await self._generate_with_backoff(
+                messages=messages,
+                provider=provider,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tool_definitions if tool_definitions else None,
+            )
 
             # 检查是否有工具调用
             if response.tool_calls:
@@ -466,28 +512,14 @@ class ToolCallLoop:
                     "不要再调用其他工具，直接提交你写好的章节内容。"
                 )
             )
-            # 带重试的调用
-            retry_count = 0
-            while retry_count < max_retries:
-                try:
-                    response = await generate_text(
-                        messages=messages,
-                        provider=provider.get_raw_provider(),
-                        model=model or provider.model,
-                        temperature=temperature,
-                        max_tokens=max_tokens,
-                        tools=tool_definitions if tool_definitions else None,
-                    )
-                    break
-                except Exception as e:
-                    error_str = str(e).lower()
-                    retry_count += 1
-                    if "400" in error_str and retry_count < max_retries:
-                        import asyncio
-
-                        await asyncio.sleep(2**retry_count)
-                        continue
-                    raise
+            response = await self._generate_with_backoff(
+                messages=messages,
+                provider=provider,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                tools=tool_definitions if tool_definitions else None,
+            )
             # 检查这次是否调用了 complete
             if response.tool_calls:
                 for tool_call in response.tool_calls:

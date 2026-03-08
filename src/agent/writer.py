@@ -196,6 +196,16 @@ class Writer(BaseAgent):
                 issues=r.issues,
                 data=r.data if isinstance(r.data, dict) else None,
             ),
+            on_retry_wait=lambda retry, wait, err: self._publish_progress(
+                context,
+                message=f"请求限流或超时，第{retry}次退避等待 {wait} 秒",
+                meta={
+                    "step": "retry_wait",
+                    "retry": retry,
+                    "wait_seconds": wait,
+                    "error": str(err)[:240],
+                },
+            ),
         )
 
         if self.llm is None:
@@ -297,6 +307,16 @@ class Writer(BaseAgent):
                 content=r.content,
                 issues=r.issues,
                 data=r.data if isinstance(r.data, dict) else None,
+            ),
+            on_retry_wait=lambda retry, wait, err: self._publish_progress(
+                context,
+                message=f"请求限流或超时，第{retry}次退避等待 {wait} 秒",
+                meta={
+                    "step": "retry_wait",
+                    "retry": retry,
+                    "wait_seconds": wait,
+                    "error": str(err)[:240],
+                },
             ),
         )
 
